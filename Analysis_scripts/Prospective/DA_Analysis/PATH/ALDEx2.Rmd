@@ -1,0 +1,240 @@
+---
+title: 'Aldex2 Prospec. PATH'
+author: "Jacob T. Nearing"
+date: "2/11/2022"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    default_style: "light"
+    downcute_theme: "chaos"
+    code_folding: hide
+    widescreen: true
+    fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ALDEx2)
+library(dplyr)
+library(broom)
+library(DT)
+
+remove_rare_features <- function( table , cutoff_pro=0.1, parallel=1 ) {
+  if(cutoff_pro<=0){
+    message("No filtering will be done due to cutoff_pro set to 0 or below")
+    return(table)
+  }
+  row2keep <- c()
+  cutoff <- ceiling( cutoff_pro * ncol(table) )
+  if(parallel <= 1){
+    for ( i in 1:nrow(table) ) {
+      row_nonzero <- length( which( table[ i , ]  > 0 ) )
+      if ( row_nonzero > cutoff ) {
+        row2keep <- c( row2keep , i)
+      }
+    }
+    return( table [ row2keep , , drop=F ])
+  }else{
+    `%dopar%` <- foreach::`%dopar%`
+    cl <- parallel::makeCluster(parallel)
+    doParallel::registerDoParallel(cl)
+    message("Running with: ", foreach::getDoParWorkers(), " cores")
+
+    res <- foreach::foreach(i = 1:nrow(table), .combine = c) %dopar% {
+      row_nonzero <- length( which ( table[ i , ] > 0))
+      if(row_nonzero > cutoff){
+        i
+      }else
+        NULL
+    }
+    parallel::stopCluster(cl)
+    return( table[res, , drop=F])
+
+  }
+
+}
+
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="Case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="Case")
+  for(i in 1:nrow(df)){
+    
+    if(((is.na(df[i,'age_diff']) | df[i,'age_diff'] < 0)) & df[i,'Case.Control']=="Control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+```
+
+```{r}
+Metadata_Breast <- readRDS("~/Private/CHAPTER_4/Prospec/PATH/Metadata/Metadata_Breast.RDS")
+Metadata_Breast$Case_Control <- as.character(Metadata_Breast$`Case/Control`)
+Metadata_Prostate <- readRDS("~/Private/CHAPTER_4/Prospec/PATH/Metadata/Metadata_Prostate.RDS")
+Metadata_Prostate$Case_Control <- as.character(Metadata_Prostate$`Case/Control`)
+Metadata_CRC <- readRDS("~/Private/CHAPTER_4/Prospec/PATH/Metadata/Metadata_CRC.RDS")
+Metadata_CRC$Case_Control <- as.character(Metadata_CRC$`Case/Control`)
+
+Metadata_Breast$Case.Control <- ifelse(Metadata_Breast$`CASE/CONTROL`==1, "Case", "Control")
+Metadata_Prostate$Case.Control <- ifelse(Metadata_Prostate$`CASE/CONTROL`==1, "Case", "Control")
+Metadata_CRC$Case.Control <- ifelse(Metadata_CRC$`CASE/CONTROL`==1, "Case", "Control")
+
+Metadata_Breast$Case.Control <- factor(Metadata_Breast$Case.Control, levels=c("Control", "Case"))
+Metadata_Prostate$Case.Control <- factor(Metadata_Prostate$Case.Control, levels=c("Control", "Case"))
+Metadata_CRC$Case.Control <- factor(Metadata_CRC$Case.Control, levels=c("Control", "Case"))
+
+Faiths <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/diversity_3000/raw_alpha/faiths/alpha-diversity.tsv",
+                     header=T, row.names=1)
+Evenness <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/diversity_3000/raw_alpha/evenness/alpha-diversity.tsv",
+                        header=T, row.names = 1)
+
+Richness <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/diversity_3000/raw_alpha/richness/alpha-diversity.tsv", 
+                       header=T, row.names = 1)
+
+Shannon <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/diversity_3000/raw_alpha/shannon/alpha-diversity.tsv",
+                      header=T, row.names = 1)
+
+Alpha_data <- cbind(Faiths, Evenness, Richness, Shannon)
+
+Alpha_data$`Saliva ID Ship` <- rownames(Alpha_data)
+
+Alpha_Breast <- Alpha_data %>% inner_join(Metadata_Breast, by="Saliva ID Ship")
+Alpha_Prostate <- Alpha_data %>% inner_join(Metadata_Prostate, by="Saliva ID Ship")
+Alpha_CRC  <- Alpha_data %>% inner_join(Metadata_CRC, by="Saliva ID Ship")
+
+Alpha_Breast$X <- Alpha_Breast$`Saliva ID Ship`
+Alpha_Prostate$X <- Alpha_Prostate$`Saliva ID Ship`
+Alpha_CRC$X <- Alpha_CRC$`Saliva ID Ship`
+
+Alpha_Breast$age_diff <- Alpha_Breast$F1_DIS_CANCER1_AGE - Alpha_Breast$SDC_AGE_CALC
+Alpha_Prostate$age_diff <- Alpha_Prostate$F1_DIS_CANCER1_AGE - Alpha_Prostate$SDC_AGE_CALC
+Alpha_CRC$age_diff <- Alpha_CRC$F1_DIS_CANCER1_AGE - Alpha_CRC$SDC_AGE_CALC
+
+Alpha_Breast$Type <- "Breast"
+Alpha_Prostate$Type <- "Prostate"
+Alpha_CRC$Type <- "Colon"
+
+Alpha_Breast <- remove_non_matching_caseIDS(Alpha_Breast)
+Alpha_Prostate <- remove_non_matching_caseIDS(Alpha_Prostate)
+Alpha_CRC <- remove_non_matching_caseIDS(Alpha_CRC)
+
+Breast_data_comb <- Alpha_Breast %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+Prostate_data_comb <- Alpha_Prostate %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+CRC_data_comb <- Alpha_CRC %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+
+Combined_data <- rbind(Breast_data_comb, Prostate_data_comb, CRC_data_comb)
+
+Breast_data <- Combined_data %>% filter(Type=="Breast")
+CRC_data <- Combined_data %>% filter(Type=="Colon")
+Prostate_data <- Combined_data %>% filter(Type=="Prostate")
+```
+
+```{r}
+
+
+Genera <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/Taxa/genus_table/feature-table.tsv", sep="\t", header=T, row.names=1, skip=1, comment.char="",
+                     check.names=F)
+
+ASV <- read.table("~/Private/Future_Cancer_Project/Cancer_Samples/deblur_output/raw_table/feature-table.tsv", sep="\t", header=T, row.names=1, skip=1, comment.char="", check.names = F)
+
+
+Breast_Genera <- Genera[,Breast_data$X]
+Breast_ASV <- ASV[,Breast_data$X]
+
+Prostate_Genera <- Genera[,Prostate_data$X]
+Prostate_ASV <- ASV[,Prostate_data$X]
+
+CRC_Genera <- Genera[,CRC_data$X]
+CRC_ASV <- ASV[,CRC_data$X]
+```
+
+# Breast Cancer
+
+## ASV
+
+```{r}
+BC_model_matrix <- model.matrix(~ Case.Control, Breast_data)
+BC_clr_asv <- aldex.clr(Breast_ASV, BC_model_matrix)
+BC_glm_asv <- aldex.glm(BC_clr_asv, BC_model_matrix)
+
+saveRDS(BC_glm_asv, "~/Private/CHAPTER_4/Prospec/PATH/Data/Breast/ASV_Aldex.RDS")
+
+```
+
+## Genera
+
+```{r}
+BC_clr_genera <- aldex.clr(Breast_Genera, BC_model_matrix)
+BC_glm_genera <- aldex.glm(BC_clr_genera, BC_model_matrix)
+
+saveRDS(BC_glm_genera, "~/Private/CHAPTER_4/Prospec/PATH/Data/Breast/Genera_Aldex.RDS")
+```
+
+# Prostate
+
+## ASV
+```{r}
+Prostate_model_matrix <- model.matrix(~ Case.Control, Prostate_data)
+Prostate_clr_asv <- aldex.clr(Prostate_ASV, Prostate_model_matrix)
+Prostate_glm_asv <- aldex.glm(Prostate_clr_asv, Prostate_model_matrix)
+
+saveRDS(Prostate_glm_asv, "~/Private/CHAPTER_4/Prospec/PATH/Data/Prostate/ASV_Aldex.RDS")
+```
+
+## Genera
+```{r}
+Prostate_clr_genera <- aldex.clr(Prostate_Genera, Prostate_model_matrix)
+Prostate_glm_genera <- aldex.glm(Prostate_clr_genera, Prostate_model_matrix)
+
+saveRDS(Prostate_glm_genera, "~/Private/CHAPTER_4/Prospec/PATH/Data/Prostate/Genera_Aldex.RDS")
+```
+
+# Colon
+
+## ASV
+```{r}
+Colon_model_matrix <- model.matrix(~ Case.Control, CRC_data)
+Colon_clr_asv <- aldex.clr(CRC_ASV, Colon_model_matrix)
+Colon_glm_asv <- aldex.glm(Colon_clr_asv, Colon_model_matrix)
+
+saveRDS(Colon_glm_asv, "~/Private/CHAPTER_4/Prospec/PATH/Data/Colon/ASV_Aldex.RDS")
+```
+
+## Genera
+```{r}
+Colon_clr_genera <- aldex.clr(CRC_Genera, Colon_model_matrix)
+Colon_glm_genera <- aldex.glm(Colon_clr_genera, Colon_model_matrix)
+
+saveRDS(Colon_glm_genera, "~/Private/CHAPTER_4/Prospec/PATH/Data/Colon/Genera_Aldex.RDS")
+```

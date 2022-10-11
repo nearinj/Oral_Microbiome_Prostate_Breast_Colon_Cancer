@@ -1,0 +1,313 @@
+---
+title: "Metadata_Analysis"
+author: "Jacob T. Nearing"
+date: "6/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readxl)
+library(dplyr)
+library(reshape2)
+
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls\n"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+### test case for above function
+
+test_df <- data.frame(CaseID = c(paste0(seq(1,100), "ID"), paste0(seq(1,100), "ID")),
+                      Case.Control=c(rep("case", 100), rep("control",100)))
+
+test_res <- remove_non_matching_caseIDS(test_df)
+
+#lets remove CaseID 1
+test_df <- test_df[-1,]
+
+test_res <- remove_non_matching_caseIDS(test_df)
+table(test_res$CaseID)
+
+#that works. Lets now remove some controls and cases
+test_df[c(102,5,87,192),]
+
+test_df <- test_df[-c(102, 5, 87, 192),]
+table(test_df$Case.Control)
+which(table(test_df$CaseID)==1)
+
+test_res <- remove_non_matching_caseIDS(test_df)
+table(test_res$Case.Control)
+table(test_res$CaseID)
+which(table(test_res$CaseID)==1)
+
+#this function works as expected.
+
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="case")
+  for(i in 1:nrow(df)){
+    
+    if(is.na(df[i,'age_diff']) & df[i,'Case.Control']=="control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+
+
+#test above function
+
+test_df <- data.frame(CaseID = c(paste0(seq(1,100), "ID"), paste0(seq(1,100), "ID")),
+                      Case.Control=c(rep("case", 100), rep("control",100)),
+                      age_diff=c(rnorm(100, mean=5, sd=1), rep(NA, 100)))
+
+matching_age <- match_age_diff(test_df)
+table(matching_age$age_diff)
+which(table(matching_age$age_diff)==1)
+
+## double check that they are correctly matched
+identical(matching_age$age_diff[1:100], matching_age$age_diff[101:200])
+
+## this function works as expected.
+```
+
+
+```{r}
+base_metadata <- readRDS("~/Private/ATP/Metadata/Base_microbiome_metadata.RDS")
+base_metadata$ParticipantKey <- as.character(base_metadata$ParticipantKey)
+rownames(base_metadata) <- base_metadata$researcher
+
+
+
+sheet_names <- c("ACR", "ACR_Treatment", "Core", "Core_Chronic", "HLQ", "Master_Data", "Case_Control_Match", "PANS", "PM_data", "UHLQ", "UHLQ_Cond")
+
+Metadata <- list()
+
+for(i in 1:length(sheet_names)){
+  
+  Metadata[[sheet_names[i]]] <- read_excel("~/Private/ATP/Metadata/ATP_MASTER_DATA.xls", sheet=i)
+  
+}
+
+Metadata[["Age_casetype"]] <- read_excel("~/Private/ATP/Metadata/SalivaAge_Groupings_2021-12-06.xlsx")
+
+Metadata[[7]]$matchID <- seq(1:207)
+
+case_control_match <- melt(Metadata[[7]][,-3], id.vars = 'matchID')
+
+
+
+Shannon_div <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/shannon.tsv",
+                          sep="\t", header=T)
+colnames(Shannon_div)[1] <- "researcher"
+
+#faith pd
+faith_pd <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/faiths_pd.tsv",
+                       sep="\t", header=T)
+colnames(faith_pd)[1] <- "researcher"
+
+#raw richness
+richness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/observed_feats.tsv",
+                       sep="\t", header=T)
+colnames(richness)[1] <- "researcher"
+
+#evenness
+evenness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/evenness.tsv",
+                       sep="\t", header=T)
+colnames(evenness)[1] <- "researcher"
+
+
+## remove samples that didn't sequence well.
+Alpha_div <- Shannon_div %>% left_join(faith_pd, by="researcher") %>% left_join(richness, by="researcher") %>% left_join(evenness, by="researcher")
+
+
+Full_data <- Alpha_div %>% inner_join(base_metadata, by="researcher")
+Full_data$Case.Control <- factor(Full_data$ARM.x, levels=c("control", "case"))
+
+
+#filter to individual cancer types
+Alpha_Breast <- Full_data %>% filter(Type=="Breast")
+Alpha_Prostate <- Full_data %>% filter(Type=="Prostate")
+Alpha_CRC <- Full_data %>% filter(Type=="Colon") 
+
+#rename sample id column
+Alpha_Breast$X <- Alpha_Breast$researcher
+Alpha_Prostate$X <- Alpha_Prostate$researcher
+Alpha_CRC$X <- Alpha_CRC$researcher
+
+#add caseIDs (so we know the matching case and control samples)
+Alpha_Breast$CaseID <- case_control_match$matchID[match(Alpha_Breast$ParticipantKey, case_control_match$value)]
+Alpha_Prostate$CaseID <- case_control_match$matchID[match(Alpha_Prostate$ParticipantKey, case_control_match$value)]
+Alpha_CRC$CaseID <- case_control_match$matchID[match(Alpha_CRC$ParticipantKey, case_control_match$value)]
+
+#remove cases or controls that do not have corresponding case/control samples
+Alpha_Breast <- remove_non_matching_caseIDS(Alpha_Breast)
+Alpha_Prostate <- remove_non_matching_caseIDS(Alpha_Prostate)
+Alpha_CRC <- remove_non_matching_caseIDS(Alpha_CRC)
+
+
+#get BMI, smoking, and age of participants at survey
+BMI <- Metadata[[3]] %>% select(ParticipantKey, CORE_BMI, CORE_AGE_AT_SURVEY_RECEIPT, CORE_SMK_STATUS)
+BMI$ParticipantKey <- as.character(BMI$ParticipantKey)
+
+#get bmi and age at measurement
+PM_data <- Metadata[[9]] %>% select(ParticipantKey, PM_AGE_AT_PM, PM_BIOIMPED_BMI)
+PM_data$ParticipantKey <- as.character(PM_data$ParticipantKey)
+
+#get smking status
+SMK_data <- Metadata[[10]] %>% select(ParticipantKey, UHLQ_SMK_STATUS)
+SMK_data$ParticipantKey <- as.character(SMK_data$ParticipantKey)
+
+#join data
+Alpha_Breast <- Alpha_Breast %>% left_join(PM_data, by="ParticipantKey")
+Alpha_Breast  <- Alpha_Breast %>% left_join(BMI, by="ParticipantKey")
+Alpha_Breast <- Alpha_Breast %>% left_join(SMK_data, by="ParticipantKey")
+
+
+
+no_core_bmi <- which(is.na(Alpha_Breast$CORE_BMI))
+
+Alpha_Breast$CORE_BMI[no_core_bmi] <- Alpha_Breast$PM_BIOIMPED_BMI[no_core_bmi]
+
+no_core_smk <- which(is.na(Alpha_Breast$CORE_SMK_STATUS))
+Alpha_Breast$CORE_SMK_STATUS[no_core_smk] <- Alpha_Breast$UHLQ_SMK_STATUS[no_core_smk]
+
+
+Alpha_CRC <- Alpha_CRC %>% left_join(PM_data, by="ParticipantKey")
+Alpha_CRC  <- Alpha_CRC %>% left_join(BMI, by="ParticipantKey")
+Alpha_CRC <- Alpha_CRC %>% left_join(SMK_data, by="ParticipantKey")
+
+
+
+no_core_bmi <- which(is.na(Alpha_CRC$CORE_BMI))
+
+Alpha_CRC$CORE_BMI[no_core_bmi] <- Alpha_CRC$PM_BIOIMPED_BMI[no_core_bmi]
+
+no_core_smk <- which(is.na(Alpha_CRC$CORE_SMK_STATUS))
+Alpha_CRC$CORE_SMK_STATUS[no_core_smk] <- Alpha_CRC$UHLQ_SMK_STATUS[no_core_smk]
+
+
+Alpha_Prostate <- Alpha_Prostate %>% left_join(PM_data, by="ParticipantKey")
+Alpha_Prostate  <- Alpha_Prostate %>% left_join(BMI, by="ParticipantKey")
+Alpha_Prostate <- Alpha_Prostate %>% left_join(SMK_data, by="ParticipantKey")
+
+
+
+no_core_bmi <- which(is.na(Alpha_Prostate$CORE_BMI))
+
+Alpha_Prostate$CORE_BMI[no_core_bmi] <- Alpha_Prostate$PM_BIOIMPED_BMI[no_core_bmi]
+
+no_core_smk <- which(is.na(Alpha_Prostate$CORE_SMK_STATUS))
+Alpha_Prostate$CORE_SMK_STATUS[no_core_smk] <- Alpha_Prostate$UHLQ_SMK_STATUS[no_core_smk]
+
+
+Sex_data <- Metadata[[6]] %>% select(ParticipantKey, PARTICIPANT_SEX)
+Sex_data$ParticipantKey <- as.character(Sex_data$ParticipantKey)
+
+Alpha_Breast <- Alpha_Breast %>% left_join(Sex_data, by="ParticipantKey")
+Alpha_CRC <- Alpha_CRC %>% left_join(Sex_data, by="ParticipantKey")
+Alpha_Prostate <- Alpha_Prostate %>% left_join(Sex_data, by="ParticipantKey")
+
+```
+
+# Breast Cancer
+
+```{r}
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+
+
+Alpha_Breast %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
+
+```
+
+
+# Prostate Cancer
+
+```{r}
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+
+Alpha_Prostate %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
+```
+
+
+# Colon Cancer
+
+```{r}
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+
+Alpha_CRC %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
+
+```
+
+# save metadata that can be released
+```{r}
+ATP_pro_metadata <- rbind(Alpha_Breast, Alpha_CRC)
+ATP_pro_metadata <- rbind(ATP_pro_metadata, Alpha_Prostate)
+
+
+ATP_pro_metadata <- ATP_pro_metadata %>% select(X, Case.Control, Type, shannon_entropy, faith_pd, observed_features, pielou_evenness, CaseID, CANCER_SITE.x, PARTICIPANT_SEX, age_diff)
+# table with full metadata
+# double check ethics if this can be released.
+write.table(x=ATP_pro_metadata, file="~/Private/CHAPTER_4/Cleaned_Repo_D1/Data/Prospective/ATP_metadata_with_extra.csv",
+           col.names=NA, row.names=T, quote=F, sep=",")
+
+```
+
+```{r}
+samp_names <- ATP_pro_metadata %>% select(X)
+write.table(samp_names, file="~/Private/CHAPTER_4/UPLOAD_Data/ATP_pro_samps.txt", col.names = NA, quote=F, sep=" ")
+```

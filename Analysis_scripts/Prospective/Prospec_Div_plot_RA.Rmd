@@ -1,0 +1,90 @@
+---
+title: "Figue4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(cowplot)
+library(ggplot2)
+```
+
+
+
+```{r}
+PATH_alpha <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_PATH_alpha_all.RDS")
+ATP_alpha <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_alpha_all.RDS")
+
+PATH_Breast_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_PATH_breast_beta.RDS")
+
+PATH_Prostate_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_PATH_prostate_beta.RDS")
+
+PATH_CRC_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_PATH_CRC_beta.RDS")
+
+
+ATP_breast_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_breast_beta.RDS")
+
+ATP_prostate_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_prostate_beta.RDS")
+
+ATP_CRC_beta <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_CRC_beta.RDS")
+
+```
+
+
+```{r}
+alpha <- plot_grid(PATH_alpha[[4]] + theme_cowplot() + theme(legend.position = "none"),
+                   ATP_alpha[[4]] + theme_cowplot() + theme(legend.position = "none"),
+                   PATH_alpha[[2]] + theme_cowplot() + theme(legend.position = "none"),
+                   ATP_alpha[[2]] + theme_cowplot() + theme(legend.position = "none"),
+                   nrow=2,
+                   labels=c("A", "D", "B", "E"))
+
+alpha_leg <- plot_grid(alpha,
+                       get_legend(PATH_alpha[[1]]),
+                       nrow=1,
+                       rel_widths = c(1,.1))
+alpha_leg
+
+
+```
+
+
+```{r}
+beta_PATH <- plot_grid(PATH_Breast_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                       PATH_Prostate_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                       PATH_CRC_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                       nrow=2,
+                       labels=c("C","",""))
+
+beta_PATH
+```
+
+```{r}
+beta_ATP <- plot_grid(ATP_breast_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                      ATP_prostate_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                      ATP_CRC_beta[[1]][[1]] + theme_cowplot() + theme(legend.position = "none") + ggtitle(""),
+                      nrow=2,
+                      labels=c("F", "", ""))
+beta_ATP
+```
+
+```{r}
+bottom_plot <- plot_grid(beta_PATH,
+                         beta_ATP,
+                         nrow=1)
+
+final_fig <- plot_grid(alpha,
+                       bottom_plot,
+                       nrow=2)
+final_fig <- plot_grid(final_fig,
+                       get_legend(ATP_breast_beta[[1]][[1]]),
+                       rel_widths = c(1,.1))
+final_fig
+
+# ggsave("~/Private/CHAPTER_4/Cleaned_Repo_D1/Display_Items/Main_Figures/Figure4.pdf",
+#        width=9, height=9, units="in", dpi=600, plot=final_fig)
+# 
+# ggsave("~/Private/CHAPTER_4/Cleaned_Repo_D1/Display_Items/Main_Figures/Figure4.png",
+#        width=9, height=9, dpi=600, units="in", plot=final_fig)
+```

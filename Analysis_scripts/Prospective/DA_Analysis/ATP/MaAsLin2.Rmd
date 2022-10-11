@@ -1,0 +1,293 @@
+---
+title: "ATP Maaslin2"
+author: "Jacob T. Nearing"
+date: "2/15/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Maaslin2)
+library(dplyr)
+library(broom)
+library(DT)
+library(readxl)
+library(reshape2)
+
+remove_rare_features <- function( table , cutoff_pro=0.1, parallel=1 ) {
+  if(cutoff_pro<=0){
+    message("No filtering will be done due to cutoff_pro set to 0 or below")
+    return(table)
+  }
+  row2keep <- c()
+  cutoff <- ceiling( cutoff_pro * ncol(table) )
+  if(parallel <= 1){
+    for ( i in 1:nrow(table) ) {
+      row_nonzero <- length( which( table[ i , ]  > 0 ) )
+      if ( row_nonzero > cutoff ) {
+        row2keep <- c( row2keep , i)
+      }
+    }
+    return( table [ row2keep , , drop=F ])
+  }else{
+    `%dopar%` <- foreach::`%dopar%`
+    cl <- parallel::makeCluster(parallel)
+    doParallel::registerDoParallel(cl)
+    message("Running with: ", foreach::getDoParWorkers(), " cores")
+
+    res <- foreach::foreach(i = 1:nrow(table), .combine = c) %dopar% {
+      row_nonzero <- length( which ( table[ i , ] > 0))
+      if(row_nonzero > cutoff){
+        i
+      }else
+        NULL
+    }
+    parallel::stopCluster(cl)
+    return( table[res, , drop=F])
+
+  }
+
+}
+
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="case")
+  for(i in 1:nrow(df)){
+    
+    if(is.na(df[i,'age_diff']) & df[i,'Case.Control']=="control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+```
+
+```{r}
+base_metadata <- readRDS("~/Private/ATP/Metadata/Base_microbiome_metadata.RDS")
+base_metadata$ParticipantKey <- as.character(base_metadata$ParticipantKey)
+rownames(base_metadata) <- base_metadata$researcher
+
+
+
+sheet_names <- c("ACR", "ACR_Treatment", "Core", "Core_Chronic", "HLQ", "Master_Data", "Case_Control_Match", "PANS", "PM_data", "UHLQ", "UHLQ_Cond")
+
+Metadata <- list()
+
+for(i in 1:length(sheet_names)){
+  
+  Metadata[[sheet_names[i]]] <- read_excel("~/Private/ATP/Metadata/ATP_MASTER_DATA.xls", sheet=i)
+  
+}
+
+
+Metadata[[7]]$matchID <- seq(1:207)
+
+case_control_match <- melt(Metadata[[7]][,-3], id.vars = 'matchID')
+
+
+
+Shannon_div <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/shannon.tsv",
+                          sep="\t", header=T)
+colnames(Shannon_div)[1] <- "researcher"
+
+#faith pd
+faith_pd <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/faiths_pd.tsv",
+                       sep="\t", header=T)
+colnames(faith_pd)[1] <- "researcher"
+
+#raw richness
+richness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/observed_feats.tsv",
+                       sep="\t", header=T)
+colnames(richness)[1] <- "researcher"
+
+#evenness
+evenness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/evenness.tsv",
+                       sep="\t", header=T)
+colnames(evenness)[1] <- "researcher"
+
+
+## 40 samples did not reach sequencing requirements.
+Alpha_div <- Shannon_div %>% left_join(faith_pd, by="researcher") %>% left_join(richness, by="researcher") %>% left_join(evenness, by="researcher")
+
+
+Full_data <- Alpha_div %>% inner_join(base_metadata, by="researcher")
+Full_data$Case.Control <- factor(Full_data$ARM.x, levels=c("control", "case"))
+
+
+
+Alpha_Breast <- Full_data %>% filter(Type=="Breast")
+Alpha_Prostate <- Full_data %>% filter(Type=="Prostate")
+Alpha_CRC <- Full_data %>% filter(Type=="Colon") 
+
+Alpha_Breast$X <- Alpha_Breast$researcher
+Alpha_Prostate$X <- Alpha_Prostate$researcher
+Alpha_CRC$X <- Alpha_CRC$researcher
+
+Alpha_Breast$CaseID <- case_control_match$matchID[match(Alpha_Breast$ParticipantKey, case_control_match$value)]
+Alpha_Prostate$CaseID <- case_control_match$matchID[match(Alpha_Prostate$ParticipantKey, case_control_match$value)]
+Alpha_CRC$CaseID <- case_control_match$matchID[match(Alpha_CRC$ParticipantKey, case_control_match$value)]
+
+Alpha_Breast <- remove_non_matching_caseIDS(Alpha_Breast)
+Alpha_Prostate <- remove_non_matching_caseIDS(Alpha_Prostate)
+Alpha_CRC <- remove_non_matching_caseIDS(Alpha_CRC)
+
+Breast_data_comb <- Alpha_Breast %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+Prostate_data_comb <- Alpha_Prostate %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+CRC_data_comb <- Alpha_CRC %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+Combined_data <- rbind(Breast_data_comb, Prostate_data_comb, CRC_data_comb)
+
+Breast_data <- Combined_data %>% filter(Type=="Breast")
+CRC_data <- Combined_data %>% filter(Type=="Colon")
+Prostate_data <- Combined_data %>% filter(Type=="Prostate")
+
+```
+
+```{r}
+
+genera <- read.table("~/Private/ATP/Analysis_21_12_01/taxa_tabs/level6_tabs/feature-tab.tsv",
+                     sep="\t", comment.char="", skip=1, header=T, check.names = F, row.names = 1)
+
+ASV <- read.table("~/Private/ATP/Analysis_21_12_01/deblur_output/asv_table/feature-table.tsv",
+                  sep="\t", comment.char = "", skip=1, header=T, check.names = F, row.names = 1)
+
+genera_breast <- genera[,as.character(Breast_data$X)]
+genera_prostate <- genera[,as.character(Prostate_data$X)]
+genera_colon <- genera[,as.character(CRC_data$X)]
+
+asv_breast <- ASV[,as.character(Breast_data$X)]
+asv_prostate <- ASV[,as.character(Prostate_data$X)]
+asv_colon <- ASV[,as.character(CRC_data$X)]
+
+```
+
+# Breast Cancer
+
+## ASV
+```{r}
+Breast_data <- data.frame(Breast_data)
+rownames(Breast_data) <- Breast_data$X
+
+Output <- "~/Private/Future_Cancer_Project/Cancer_Samples/temp_res"
+
+Breast_Cancer_ASV <- Maaslin2(input_data = asv_breast,
+                              input_metadata = Breast_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Breast_Cancer_ASV, "~/Private/CHAPTER_4/Prospec/ATP/data/Breast/ASV_maaslin2.RDS")
+```
+
+## Genera
+```{r}
+Breast_Cancer_genera <- Maaslin2(input_data = genera_breast,
+                              input_metadata = Breast_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Breast_Cancer_genera, "~/Private/CHAPTER_4/Prospec/ATP/data/Breast/Genera_maaslin2.RDS")
+```
+
+# Prostate Cancer
+
+## ASV
+```{r}
+Prostate_data <- data.frame(Prostate_data)
+rownames(Prostate_data) <- Prostate_data$X
+
+Prostate_Cancer_ASV <- Maaslin2(input_data = asv_prostate,
+                              input_metadata = Prostate_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Prostate_Cancer_ASV, "~/Private/CHAPTER_4/Prospec/ATP/data/Prostate/ASV_maaslin2.RDS")
+```
+
+## Genera
+```{r}
+Prostate_Cancer_genera <- Maaslin2(input_data = genera_prostate,
+                              input_metadata = Prostate_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Prostate_Cancer_genera, "~/Private/CHAPTER_4/Prospec/ATP/data/Prostate/Genera_maaslin2.RDS")
+```
+
+# Colon Cancer
+
+## ASV
+```{r}
+CRC_data <- data.frame(CRC_data)
+rownames(CRC_data) <- CRC_data$X
+
+Colon_Cancer_ASV <- Maaslin2(input_data = asv_colon,
+                              input_metadata = CRC_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Colon_Cancer_ASV, "~/Private/CHAPTER_4/Prospec/ATP/data/Colon/ASV_maaslin2.RDS")
+```
+
+## Genera
+```{r}
+Colon_Cancer_genera <- Maaslin2(input_data = genera_colon,
+                              input_metadata = CRC_data,
+                              output=Output, 
+                              min_abundance = 0,
+                              min_prevalence = 0,
+                              transform = "AST",
+                              fixed_effects = c("Case.Control"),
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+saveRDS(Colon_Cancer_genera, "~/Private/CHAPTER_4/Prospec/ATP/data/Colon/Genera_maaslin2.RDS")
+```

@@ -1,0 +1,678 @@
+---
+title: "Prospective_Figures_ATP"
+author: "Jacob T. Nearing"
+date: "08/03/2022"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(broom)
+library(kableExtra)
+library(ggplot2)
+library(ggbeeswarm)
+library(cowplot)
+
+library(reshape2)
+library(ggpubr)
+library(rstatix)
+library(vegan)
+
+library(readxl)
+theme_set(theme_cowplot())
+
+
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="case")
+  for(i in 1:nrow(df)){
+    
+    if(is.na(df[i,'age_diff']) & df[i,'Case.Control']=="control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+
+run_lm_comb_data <- function(data, type_split, main_variable, covariates, estimate_var){
+  
+  anova_res <- list()
+  ggpubr_res <- list()
+  
+  for(i in unique(data[,type_split])){
+    pass_in_data <- data %>% filter(!!sym(type_split)==i)
+    
+    res <- run_lm_add_using_ggplot(pass_in_data, main_variable = main_variable, covariates = covariates,
+                            estimate_var = estimate_var, fct=i, type_split)
+    anova_res[[i]] <- res[[1]]
+    ggpubr_res[[i]] <- res[[2]]
+  }
+  ggpurb_df <- do.call(rbind, ggpubr_res)
+  
+  return(list(anova_res, ggpurb_df))
+  
+}
+
+run_lm_add_using_ggplot <- function(data, main_variable, covariates, estimate_var, fct, type_split){
+    
+  
+    formula <- paste(covariates, main_variable, sep=" + ")
+    final_formula <- paste(estimate_var, "~", formula, sep=" ")
+    message(final_formula)
+    model <- lm(final_formula, data)
+    anova_res <- anova(model)
+    anova_res$feat <- rownames(anova_res)
+    anova_filt <- anova_res %>% filter(feat==main_variable)
+    pval <- anova_filt$`Pr(>F)`
+    
+    if(is.null(fct)){
+      ggpurb_format <- data.frame(group1=levels(data[,main_variable])[1],
+                                group2=levels(data[,main_variable])[2],
+                                p.adj=pval)
+    }else{
+      ggpurb_format <- data.frame(group1=levels(data[,main_variable])[1],
+                                group2=levels(data[,main_variable])[2],
+                                p.adj=round(pval,3),
+                                supp=fct,
+                                .y.=max(data[,estimate_var])*1.20)
+      
+      colnames(ggpurb_format)[4] <- type_split
+      
+    }
+    
+    return(list(anova_res, ggpurb_format))
+}
+
+
+make_alpha_div_plot <- function(df, split_type, main_variable, covariates, estimate_var,ylab,pval=T,hide.ns){
+  
+  stats <- run_lm_comb_data(data=df, type_split = split_type, main_variable = main_variable,
+                                        covariates = covariates, estimate_var = estimate_var)
+  
+  plot <- ggplot(df, aes_string(x=main_variable, y=estimate_var)) +
+  geom_boxplot(alpha=0.1, width=0.1, outlier.alpha = 0) +
+  geom_violin(alpha=0.2, aes_string(fill=main_variable)) +
+  geom_quasirandom(alpha=0.2) +
+  xlab("") +
+  ylab(ylab) +
+  facet_grid(reformulate(split_type))
+
+  if(pval==T){
+    plot <- plot + stat_pvalue_manual(stats[[2]], label="p.adj", hide.ns=hide.ns, y.position = '.y.')
+  }
+  
+  return(plot)
+}
+
+make_all_alpha_div_plots <- function(df, split_type, main_variable, covariates, estimate_var, ylab, pval=T, hide.ns=T){
+  plot_list <- list()
+  j <- 1
+  for(i in ylab){
+    plot_list[[i]] <- make_alpha_div_plot(df, split_type, main_variable, covariates, estimate_var[j], i, pval,hide.ns)
+    j <- j + 1
+  }
+  return(plot_list)
+  
+}
+```
+
+
+```{r}
+base_metadata <- readRDS("~/Private/ATP/Metadata/Base_microbiome_metadata.RDS")
+base_metadata$ParticipantKey <- as.character(base_metadata$ParticipantKey)
+rownames(base_metadata) <- base_metadata$researcher
+
+
+sheet_names <- c("ACR", "ACR_Treatment", "Core", "Core_Chronic", "HLQ", "Master_Data", "Case_Control_Match", "PANS", "PM_data", "UHLQ", "UHLQ_Cond")
+
+Metadata <- list()
+
+for(i in 1:length(sheet_names)){
+  
+  Metadata[[sheet_names[i]]] <- read_excel("~/Private/ATP/Metadata/ATP_MASTER_DATA.xls", sheet=i)
+  
+}
+
+
+Metadata[[7]]$matchID <- seq(1:207)
+
+case_control_match <- melt(Metadata[[7]][,-3], id.vars = 'matchID')
+
+
+
+Shannon_div <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/shannon.tsv",
+                          sep="\t", header=T)
+colnames(Shannon_div)[1] <- "researcher"
+
+#faith pd
+faith_pd <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/faiths_pd.tsv",
+                       sep="\t", header=T)
+colnames(faith_pd)[1] <- "researcher"
+
+#raw richness
+richness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/observed_feats.tsv",
+                       sep="\t", header=T)
+colnames(richness)[1] <- "researcher"
+
+#evenness
+evenness <- read.table("~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_alpha/evenness.tsv",
+                       sep="\t", header=T)
+colnames(evenness)[1] <- "researcher"
+
+
+## 40 samples did not reach sequencing requirements.
+Alpha_div <- Shannon_div %>% left_join(faith_pd, by="researcher") %>% left_join(richness, by="researcher") %>% left_join(evenness, by="researcher")
+
+
+Full_data <- Alpha_div %>% inner_join(base_metadata, by="researcher")
+Full_data$Case.Control <- factor(Full_data$ARM.x, levels=c("control", "case"))
+
+
+
+Alpha_Breast <- Full_data %>% filter(Type=="Breast")
+Alpha_Prostate <- Full_data %>% filter(Type=="Prostate")
+Alpha_CRC <- Full_data %>% filter(Type=="Colon") 
+
+Alpha_Breast$X <- Alpha_Breast$researcher
+Alpha_Prostate$X <- Alpha_Prostate$researcher
+Alpha_CRC$X <- Alpha_CRC$researcher
+
+Alpha_Breast$CaseID <- case_control_match$matchID[match(Alpha_Breast$ParticipantKey, case_control_match$value)]
+Alpha_Prostate$CaseID <- case_control_match$matchID[match(Alpha_Prostate$ParticipantKey, case_control_match$value)]
+Alpha_CRC$CaseID <- case_control_match$matchID[match(Alpha_CRC$ParticipantKey, case_control_match$value)]
+
+Alpha_Breast <- remove_non_matching_caseIDS(Alpha_Breast)
+Alpha_Prostate <- remove_non_matching_caseIDS(Alpha_Prostate)
+Alpha_CRC <- remove_non_matching_caseIDS(Alpha_CRC)
+
+Breast_data_comb <- Alpha_Breast %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+Prostate_data_comb <- Alpha_Prostate %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+CRC_data_comb <- Alpha_CRC %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID)
+
+Combined_data <- rbind(Breast_data_comb, Prostate_data_comb, CRC_data_comb)
+
+Case_data_filt <- Combined_data %>% filter(Case.Control=="case") %>% filter(age_diff <= 4)
+
+Case_time_keep <- Case_data_filt$CaseID
+
+Combined_data_filt <- Combined_data %>% filter(CaseID %in% Case_time_keep)
+```
+
+# Alpha Diversity
+
+## no time filt
+
+```{r}
+est_vars <- c("faith_pd", "shannon_entropy", "pielou_evenness", "observed_features")
+ylabs <- c("Faith's PD", "Shannon Div.", "Evenness", "Richness")
+
+
+all_cancer_plots <- make_all_alpha_div_plots(df=Combined_data, split_type = "Type", main_variable = "Case.Control", covariates = NULL,
+                                             estimate_var = est_vars, ylab = ylabs, hide.ns=T)
+
+
+Sup_fig_alpha <- plot_grid(all_cancer_plots[[1]] + theme_cowplot() + theme(legend.position = "none"),
+                           #all_cancer_plots[[2]]+ theme_cowplot() + theme(legend.position = "none") ,
+                           all_cancer_plots[[3]] + theme_cowplot() + theme(legend.position = "none"),
+                           #all_cancer_plots[[4]] + theme_cowplot() + theme(legend.position = "none"),
+                           nrow=2)
+
+
+Sup_fig_alpha_leg <- plot_grid(Sup_fig_alpha,
+                               get_legend(all_cancer_plots[[1]]),
+                               nrow=1,
+                               rel_widths = c(1,.1))
+
+Sup_fig_alpha_leg
+
+
+lm_alpha_res_faith <- run_lm_comb_data(data = Combined_data, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[1]])
+
+lm_alpha_res[[1]]
+
+lm_alpha_res_shannon <- run_lm_comb_data(data = Combined_data, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[2]])
+
+lm_alpha_res_shannon[[1]]
+
+lm_alpha_res_even <- run_lm_comb_data(data = Combined_data, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[3]])
+
+lm_alpha_res_even[[1]]
+
+lm_alpha_res_rich <- run_lm_comb_data(data = Combined_data, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[4]])
+
+lm_alpha_res_rich[[1]]
+
+
+test <- lm(Breast_data_comb$faith_pd ~ Breast_data_comb$Case.Control)
+anova(test)
+
+saveRDS(all_cancer_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_alpha_all.RDS")
+
+
+```
+
+
+## Time filt
+
+```{r}
+all_cancer_plots_filt <- make_all_alpha_div_plots(df=Combined_data_filt, split_type = "Type", main_variable = "Case.Control", covariates = NULL,
+                                             estimate_var = est_vars, ylab = ylabs)
+
+
+Sup_fig_alpha_time <- plot_grid(all_cancer_plots_filt[[1]] + theme_cowplot() + theme(legend.position = "none"),
+                                all_cancer_plots_filt[[2]] + theme_cowplot() + theme(legend.position = "none"),
+                                all_cancer_plots_filt[[3]] + theme_cowplot() + theme(legend.position = "none"),
+                                all_cancer_plots_filt[[4]] + theme_cowplot() + theme(legend.position = "none"),
+                                nrow=4)
+                                
+Sup_fig_alpha_time_leg <- plot_grid(Sup_fig_alpha_time,
+                                    get_legend(all_cancer_plots_filt[[1]]),
+                                    nrow=1, 
+                                    rel_widths = c(1,.1))
+
+Sup_fig_alpha_time_leg
+
+lm_alpha_res_faith <- run_lm_comb_data(data = Combined_data_filt, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[1]])
+
+lm_alpha_res_faith[[1]]
+
+lm_alpha_res_shannon <- run_lm_comb_data(data = Combined_data_filt, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[2]])
+
+lm_alpha_res_shannon[[1]]
+
+lm_alpha_res_even <- run_lm_comb_data(data = Combined_data_filt, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[3]])
+
+lm_alpha_res_even[[1]]
+
+lm_alpha_res_rich <- run_lm_comb_data(data = Combined_data_filt, type_split = "Type", main_variable = "Case.Control", covariates = NULL, estimate_var = est_vars[[4]])
+
+lm_alpha_res_rich[[1]]
+
+
+saveRDS(all_cancer_plots_filt, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_alpha_all_time4.RDS")
+```
+
+# Beta Diversity
+```{r}
+plot_pca_all <- function(dist, meta, title, facet_type=NULL){
+  
+  dist_filt <- dist[meta$X, meta$X]
+  
+  dist_pca <- cmdscale(dist_filt, eig=T)
+  
+  dist_plot_data <- data.frame(PC1=dist_pca$points[,1],
+                               PC2=dist_pca$points[,2],
+                               Case.Control=meta$Case.Control_type,
+                               facet=meta[,facet_type])
+  PC1_size <- round(dist_pca$eig[1]/sum(dist_pca$eig)*100,1)
+  PC2_size <- round(dist_pca$eig[2]/sum(dist_pca$eig)*100,1)
+  
+  PC1_lab <- paste0("PC1 ", PC1_size, "%")
+  PC2_lab <- paste0("PC2 ", PC2_size, "%")
+  
+  if(!is.null(facet_type)){
+    dist_plot <- ggplot(dist_plot_data, aes(x=PC1, y=PC2)) +
+      geom_point(aes(fill=Case.Control, color=Case.Control)) +
+      stat_ellipse(aes(group=Case.Control, color=Case.Control)) +
+      theme(legend.title = element_blank()) +
+      xlab(PC1_lab) +
+      ylab(PC2_lab) +
+      ggtitle(title) +
+      facet_grid(~ facet)
+    
+    return(dist_plot)
+    
+  }else{
+      
+  dist_plot <- ggplot(dist_plot_data, aes(x=PC1, y=PC2, fill=Case.Control, group=Case.Control, color=Case.Control)) +
+    geom_point() +
+    stat_ellipse() +
+    theme(legend.title = element_blank()) +
+    xlab(PC1_lab) +
+    ylab(PC2_lab) +
+    ggtitle(title)
+  
+  return(dist_plot)
+    
+  }
+
+}
+
+
+run_adonis_by_facet <- function(dist, meta, facet, covariates, main_variable){
+  
+  formula <- paste(covariates, main_variable, sep=" + ")
+  final_formula <- as.formula(paste("temp_dist", formula, sep="~"))
+  message(final_formula)
+  message(facet)
+  meta_splits <- group_split(meta, !!ensym(facet))
+  adonis_res <- list()
+
+  for(i in 1:length(meta_splits)){
+    name <- as.character(meta_splits[[i]][1,facet,drop=T])
+    message(name)
+    samps <- as.data.frame(meta_splits[[i]][,"X"])
+    temp_dist <- dist[samps$X, samps$X]
+    message("running adonis")
+    
+    temp_res<- adonis(formula=final_formula, data=meta_splits[[i]], by="margin")
+    temp_res <- as.data.frame(temp_res$aov.tab)
+    temp_res$feature <- rownames(temp_res)
+    
+    adonis_res[[name]] <- temp_res
+  }
+  
+  main_vars_p <- c()
+  for(i in 1:length(adonis_res)){
+    temp_p <- adonis_res[[i]] %>% filter(feature==main_variable) %>% select(`Pr(>F)`)
+    main_vars_p <- c(main_vars_p, paste("p: ",as.character(temp_p), sep=""))
+  }
+  
+  annotation_df <- data.frame(col1=levels(meta[,facet]),
+                              label=main_vars_p)
+  colnames(annotation_df)[1] <- "facet"
+  return(list(annotation_df,adonis_res))
+}
+
+
+
+make_all_plots_and_adonis <- function(list_dist, list_title, metadata, facet, covariate, main_variable){
+  
+  pca_plots <- list()
+  adonis_res <- list()
+  
+  for(i in names(list_dist)){
+    pca_plots[[i]] <- plot_pca_all(dist=list_dist[[i]], meta = metadata, title = list_title[[i]], facet_type = facet)
+    adonis_res[[i]] <- run_adonis_by_facet(dist=list_dist[[i]], meta=metadata, facet = facet, covariates = covariate, main_variable = main_variable) 
+  }
+  
+  return(list(pca_plots, adonis_res))
+}
+```
+
+```{r}
+WEIGHTED_UNIFRAC <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/weighted_unifrac.tsv"
+BRAY_CURTIS <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/bray_curt.tsv"
+UNWEIGHTED_UNIFRAC <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/unweighted_unifrac.tsv"
+
+w_unifrac <- read.table(WEIGHTED_UNIFRAC, sep="\t", header=T, row.names = 1, comment.char="", quote="", check.names = F)
+
+bray_curt <- read.table(BRAY_CURTIS, sep="\t", header=T, row.names = 1, comment.char = "", quote="", check.names = F)
+
+u_unifrac <- read.table(UNWEIGHTED_UNIFRAC, sep="\t", header=T, row.names = 1, comment.char="", quote="", check.names = F)
+
+Combined_data$Case.Control_type <- as.character(Combined_data$Case.Control)
+
+Combined_data$Case.Control_type[which(Combined_data$Case.Control_type=="case")] <- as.character(Combined_data$Type[which(Combined_data$Case.Control=="case")])
+
+
+Combined_data_filt$Case.Control_type <- as.character(Combined_data_filt$Case.Control)
+
+Combined_data_filt$Case.Control_type[which(Combined_data_filt$Case.Control_type=="case")] <- as.character(Combined_data_filt$Type[which(Combined_data_filt$Case.Control=="case")])
+```
+
+## no time filt
+```{r}
+Combined_data$X <- as.character(Combined_data$X)
+
+weighted_uni_comb <- w_unifrac[as.character(Combined_data$X), as.character(Combined_data$X)]
+unweighted_uni_comb <- u_unifrac[as.character(Combined_data$X), as.character(Combined_data$X)]
+bray_comb <- bray_curt[as.character(Combined_data$X), as.character(Combined_data$X)]
+```
+
+```{r}
+weighted_comb_plot <- plot_pca_all(weighted_uni_comb, Combined_data, "Weighted UniFrac")
+weighted_comb_plot
+saveRDS(weighted_comb_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_atp_beta_wuni.RDS")
+
+unweighted_comb_plot <- plot_pca_all(unweighted_uni_comb, Combined_data, "Unweighted UniFrac")
+unweighted_comb_plot
+saveRDS(unweighted_comb_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_beta_uuni.RDS")
+
+
+bray_comb_plot <- plot_pca_all(bray_comb, Combined_data, "Bray Curtis")
+saveRDS(bray_comb_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_beta_bray.RDS")
+```
+
+```{r}
+library(vegan)
+adonis(weighted_uni_comb ~ Combined_data$Case.Control_type)
+adonis(bray_comb ~ Combined_data$Case.Control_type)
+adonis(unweighted_uni_comb ~ Combined_data$Case.Control_type)
+```
+
+
+## Time filt
+
+```{r}
+Combined_data_filt$X <- as.character(Combined_data_filt$X)
+
+weighted_comb_time_plot <- plot_pca_all(weighted_uni_comb, Combined_data_filt, "Weighted UniFrac")
+saveRDS(weighted_comb_time_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_beta_wuni_time.RDS")
+
+unweighted_comb_time_plot <- plot_pca_all(unweighted_uni_comb, Combined_data_filt, "Unweighted UniFrac")
+saveRDS(unweighted_comb_time_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_uuni_time.RDS")
+
+bray_comb_time_plot <- plot_pca_all(bray_comb, Combined_data_filt, "Bray Curtis")
+saveRDS(bray_comb_time_plot, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_bray_time.RDS")
+```
+
+## Invidivudal
+
+### no time filt
+
+```{r}
+dist_list <- list(
+  'W_uni' = weighted_uni_comb,
+  'U_uni' =  unweighted_uni_comb,
+  'bray' = bray_comb
+)
+
+title_list <- list(
+  'W_uni' = "Weighted UniFrac",
+  'U_uni' = "Unweighted UniFrac",
+  'bray' = "Bray Curtis"
+)
+
+Breast_data_comb <- Combined_data %>% filter(Type=="Breast")
+Breast_data_comb$Case.Control_type <- Breast_data_comb$Case.Control
+Breast_data_comb$Type <- factor(Breast_data_comb$Type)
+
+Breast_beta_plots <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=Breast_data_comb, facet="Type", covariate = NULL,
+                                               main_variable = "Case.Control")
+
+Breast_beta_plots[[2]]
+
+saveRDS(Breast_beta_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_breast_beta.RDS")
+```
+
+```{r}
+Prostate_data_comb <- Combined_data %>% filter(Type=="Prostate")
+Prostate_data_comb$Case.Control_type <- Prostate_data_comb$Case.Control
+Prostate_data_comb$Type <- factor(Prostate_data_comb$Type)
+
+Prostate_beta_plots <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=Prostate_data_comb, facet="Type", covariate = NULL,
+                                                 main_variable="Case.Control")
+saveRDS(Prostate_beta_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_prostate_beta.RDS")
+```
+
+```{r}
+CRC_data_comb <- Combined_data %>% filter(Type=="Colon")
+CRC_data_comb$Case.Control_type <- CRC_data_comb$Case.Control
+CRC_data_comb$Type <- factor(CRC_data_comb$Type)
+
+CRC_beta_plots <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=CRC_data_comb, facet="Type", covariate = NULL,
+                                            main_variable = "Case.Control")
+saveRDS(CRC_beta_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_CRC_beta.RDS")
+```
+
+
+```{r}
+Breast_beta_plots <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_breast_beta.RDS")
+Prostate_beta_plots <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_prostate_beta.RDS")
+CRC_beta_plots <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_CRC_beta.RDS")
+
+Breast_beta_plot <- plot_grid(#Breast_beta_plots[[1]][[1]] + theme_cowplot() + theme(legend.position = "none"),
+                              Breast_beta_plots[[1]][[2]] + theme_cowplot() + theme(legend.position = "none"),
+                              Breast_beta_plots[[1]][[3]] + theme_cowplot() + theme(legend.position = "none"),
+                              nrow=1)
+
+Prostate_beta_plot <- plot_grid(#Prostate_beta_plots[[1]][[1]] + theme_cowplot() + theme(legend.position = "none"),
+                                Prostate_beta_plots[[1]][[2]] + theme_cowplot() + theme(legend.position = "none"),
+                                Prostate_beta_plots[[1]][[3]] + theme_cowplot() + theme(legend.position = "none"),
+                                nrow=1)
+
+CRC_beta_plot <- plot_grid(#CRC_beta_plots[[1]][[1]] + theme_cowplot() + theme(legend.position = "none"),
+                           CRC_beta_plots[[1]][[2]] + theme_cowplot() + theme(legend.position = "none"),
+                           CRC_beta_plots[[1]][[3]] + theme_cowplot() + theme(legend.position = "none"),
+                           nrow=1)
+
+Sup_beta_ATP <- plot_grid(Breast_beta_plot, Prostate_beta_plot, CRC_beta_plot, nrow=3,
+                          labels=c("A", "B", "C"))
+
+
+Sup_beta_ATP_leg <- plot_grid(Sup_beta_ATP, 
+                              get_legend(Breast_beta_plots[[1]][[1]]),
+                              rel_widths = c(1,.1))
+
+Sup_beta_ATP_leg
+```
+
+### time fitl
+
+```{r}
+Breast_data_comb <- Combined_data_filt %>% filter(Type=="Breast")
+Breast_data_comb$Case.Control_type <- Breast_data_comb$Case.Control
+Breast_data_comb$Type <- factor(Breast_data_comb$Type)
+
+Breast_beta_plots_time4 <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata = Breast_data_comb, facet="Type", covariate = NULL,
+                                                     main_variable = "Case.Control")
+saveRDS(Breast_beta_plots_time4, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_breast_beta_time4.RDS")
+```
+
+```{r}
+Prostate_data_comb <- Combined_data_filt %>% filter(Type=="Prostate")
+Prostate_data_comb$Case.Control_type <- Prostate_data_comb$Case.Control
+Prostate_data_comb$Type <- factor(Prostate_data_comb$Type)
+
+Prostate_beta_plots_time4 <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=Prostate_data_comb, facet="Type", covariate = NULL,
+                                                       main_variable = "Case.Control")
+saveRDS(Prostate_beta_plots_time4, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_prostate_beta_time4.RDS")
+
+```
+
+```{r}
+CRC_data_comb <- Combined_data_filt %>% filter(Type=="Colon")
+CRC_data_comb$Case.Control_type <- CRC_data_comb$Case.Control
+CRC_data_comb$Type <- factor(CRC_data_comb$Type)
+
+CRC_beta_plots_time4 <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=CRC_data_comb, facet="Type", covariate = NULL,
+                                                  main_variable = "Case.Control")
+
+saveRDS(CRC_beta_plots_time4, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Pro_ATP_CRC_beta_time4.RDS")
+```
+
+#time vs. alpha
+
+```{r}
+Case_data <- Combined_data %>% filter(Case.Control=="case")
+
+Combined_data %>% filter(Case.Control=="control") %>% summarize(mean(faith_pd))
+
+
+faiths_cor_data <- ggplot(Case_data, aes(x=age_diff, y=faith_pd)) + geom_point() +
+  facet_grid(~ Type) + geom_line(y=10.32, color="red", linetype="dashed") +
+  ylab("Faith's Phylogenetic Diversity") + xlab("Time since diagnosis") +
+  theme_cowplot()
+faiths_cor_data
+
+Combined_data %>% filter(Case.Control=="control") %>% summarize(mean(observed_features))
+
+richness_cor_data <- ggplot(Case_data, aes(x=age_diff, y=observed_features)) + geom_point() +
+  facet_grid(~ Type) + geom_line(y=98.625, color="red", linetype="dashed") +
+  ylab("Richness") + xlab("Time since diagnosis") + theme_cowplot()
+
+
+Combined_data %>% filter(Case.Control=="control") %>% summarize(mean(shannon_entropy))
+
+shannon_cor_data <- ggplot(Case_data, aes(x=age_diff, y=shannon_entropy)) + geom_point() +
+  facet_grid(~ Type) + geom_line(y=4.29, color="red", linetype="dashed") +
+  ylab("Shannon Diversity") + xlab("Time since diagnosis") + theme_cowplot()
+
+
+Combined_data %>% filter(Case.Control=="control") %>% summarize(mean(pielou_evenness))
+
+even_cor_data <- ggplot(Case_data, aes(x=age_diff, y=pielou_evenness)) + geom_point() +
+  facet_grid(~ Type) + geom_line(y=0.652, color="red", linetype="dashed") +
+  ylab("Evenness") + xlab("Time since diagnosis") + theme_cowplot()
+
+```
+
+
+```{r}
+cor_plot_fin <- plot_grid(faiths_cor_data, richness_cor_data, shannon_cor_data, even_cor_data)
+cor_plot_fin
+```
+
+```{r}
+Breast_case <- Case_data %>% filter(Type=="Breast")
+
+cor.test(Breast_case$age_diff, Breast_case$faith_pd, method="spearman")
+cor.test(Breast_case$age_diff, Breast_case$pielou_evenness, method="spearman")
+cor.test(Breast_case$age_diff, Breast_case$shannon_entropy, method="spearman")
+cor.test(Breast_case$age_diff, Breast_case$observed_features, method="spearman")
+```
+
+```{r}
+Prostate_case <- Case_data %>% filter(Type=="Prostate")
+
+cor.test(Prostate_case$age_diff, Prostate_case$faith_pd, method="spearman")
+cor.test(Prostate_case$age_diff, Prostate_case$pielou_evenness, method="spearman")
+cor.test(Prostate_case$age_diff, Prostate_case$shannon_entropy, method="spearman")
+cor.test(Prostate_case$age_diff, Prostate_case$observed_features, method="spearman")
+
+
+
+```
+
+
+```{r}
+Colon_case <- Case_data %>% filter(Type=="Colon")
+
+cor.test(Colon_case$age_diff, Colon_case$faith_pd, method="spearman")
+cor.test(Colon_case$age_diff, Colon_case$pielou_evenness, method="spearman")
+cor.test(Colon_case$age_diff, Colon_case$shannon_entropy, method="spearman")
+cor.test(Colon_case$age_diff, Colon_case$observed_features, method="spearman")
+```

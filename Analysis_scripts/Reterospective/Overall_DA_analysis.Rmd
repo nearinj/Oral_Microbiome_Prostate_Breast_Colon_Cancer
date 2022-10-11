@@ -1,0 +1,1237 @@
+---
+title: "Differential Analysis of Reterospective Cancer Cases from oral saliva"
+author: "Jacob T. Nearing"
+date: "2/09/2022"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    default_style: "light"
+    downcute_theme: "chaos"
+    code_folding: hide
+    widescreen: true
+    fig_height: 12
+
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1800px;
+  margin-left: 0;
+  margin-right: 0;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(ggbeeswarm)
+library(gridExtra)
+library(cowplot)
+library(kableExtra)
+library(DT)
+library(reshape2)
+library(pheatmap)
+library(RColorBrewer)
+
+remove_rare_features <- function( table , cutoff_pro=0.1, parallel=1 ) {
+  if(cutoff_pro<=0){
+    message("No filtering will be done due to cutoff_pro set to 0 or below")
+    return(table)
+  }
+  row2keep <- c()
+  cutoff <- ceiling( cutoff_pro * ncol(table) )
+  if(parallel <= 1){
+    for ( i in 1:nrow(table) ) {
+      row_nonzero <- length( which( table[ i , ]  > 0 ) )
+      if ( row_nonzero > cutoff ) {
+        row2keep <- c( row2keep , i)
+      }
+    }
+    return( table [ row2keep , , drop=F ])
+  }else{
+    `%dopar%` <- foreach::`%dopar%`
+    cl <- parallel::makeCluster(parallel)
+    doParallel::registerDoParallel(cl)
+    message("Running with: ", foreach::getDoParWorkers(), " cores")
+
+    res <- foreach::foreach(i = 1:nrow(table), .combine = c) %dopar% {
+      row_nonzero <- length( which ( table[ i , ] > 0))
+      if(row_nonzero > cutoff){
+        i
+      }else
+        NULL
+    }
+    parallel::stopCluster(cl)
+    return( table[res, , drop=F])
+
+  }
+
+}
+
+
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="Case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="Case")
+  for(i in 1:nrow(df)){
+    
+    if(is.na(df[i,'age_diff']) & df[i,'Case.Control']=="Control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+
+#all these functions have been previously tested.
+```
+
+
+```{r}
+Breast_ASV_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/ASV_Aldex2.RDS")
+Breast_ASV_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/ASV_ANCOM2.RDS")
+Breast_ASV_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/ASV_Corncob.RDS")
+Breast_ASV_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/ASV_Maaslin2.RDS")
+
+Breast_GENUS_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/Genus_Aldex2.RDS")
+Breast_GENUS_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/Genus_ANCOM2.RDS")
+Breast_GENUS_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/Genus_Corncob.RDS")
+Breast_GENUS_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Breast/Genus_Maaslin2.RDS")
+```
+
+```{r}
+Prostate_ASV_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/ASV_Aldex2.RDS")
+Prostate_ASV_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/ASV_ANCOM2.RDS")
+Prostate_ASV_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/ASV_Corncob.RDS")
+Prostate_ASV_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/ASV_Maaslin2.RDS")
+
+Prostate_GENUS_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/Genus_Aldex2.RDS")
+Prostate_GENUS_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/Genus_ANCOM2.RDS")
+Prostate_GENUS_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/Genus_Corncob.RDS")
+Prostate_GENUS_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Prostate/Genus_Maaslin2.RDS")
+
+#filter out structural zeros due to low sample size
+Prostate_ASV_ancom <- Prostate_ASV_ancom[-which(is.infinite(Prostate_ASV_ancom$W)),]
+```
+
+
+```{r}
+Colon_ASV_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/ASV_Aldex2.RDS")
+Colon_ASV_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/ASV_ANCOM2.RDS")
+Colon_ASV_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/ASV_Corncob.RDS")
+Colon_ASV_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/ASV_Maaslin2.RDS")
+
+Colon_GENUS_aldex <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/Genus_Aldex2.RDS")
+Colon_GENUS_ancom <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/Genus_ANCOM2.RDS")
+Colon_GENUS_corncob <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/Genus_Corncob.RDS")
+Colon_GENUS_maaslin2 <- readRDS("~/Private/CHAPTER_4/Retero/PATH/DA_Analysis/data/Colon/Genus_Maaslin2.RDS")
+
+#filter out structural zeros due to low sample size
+Colon_ASV_ancom <- Colon_ASV_ancom[-which(is.infinite(Colon_ASV_ancom$W)),]
+Colon_GENUS_ancom <- Colon_GENUS_ancom[-which(is.infinite(Colon_GENUS_ancom$W)),]
+```
+
+
+```{r load_metadata}
+Metadata_Breast <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_Breast_21_03_11.csv", row.names = 1)
+Metadata_CRC <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_CRC_21_03_11.csv", row.names = 1)
+Metadata_Prostate <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_Prostate_21_03_11.csv", row.names = 1)
+
+
+### Load in alpha data
+
+Alpha_Breast <- readRDS("~/Private/Previous_Cancer_Project/Data/Alpha_data_Breast.RDS")
+Alpha_CRC <- readRDS("~/Private/Previous_Cancer_Project/Data/Alpha_data_CRC.RDS")
+Alpha_Prostate <- readRDS("~/Private/Previous_Cancer_Project/Data/Alpha_data_prostate.RDS")
+
+
+Metadata_Breast <- Metadata_Breast[rownames(Alpha_Breast),]
+Metadata_CRC <- Metadata_CRC[rownames(Alpha_CRC),]
+Metadata_Prostate <- Metadata_Prostate[rownames(Alpha_Prostate),]
+
+Metadata_Breast_Cases <- Metadata_Breast[which(Metadata_Breast$Case.Control==1),]
+Metadata_CRC_Cases <- Metadata_CRC[which(Metadata_CRC$Case.Control==1),]
+Metadata_Prostate_Cases <- Metadata_Prostate[which(Metadata_Prostate$Case.Control==1),]
+
+Alpha_Breast_Cases <- Alpha_Breast[rownames(Metadata_Breast_Cases),]
+Alpha_CRC_Cases <- Alpha_CRC[rownames(Metadata_CRC_Cases),]
+Alpha_Prostate_Cases <- Alpha_Prostate[rownames(Metadata_Prostate_Cases),]
+
+Alpha_Breast$X <- rownames(Alpha_Breast)
+Breast_data <- Alpha_Breast %>% left_join(Metadata_Breast, by="X")
+Breast_data$Case.Control <- ifelse(Breast_data$Case.Control==1, "Case", "Control")
+
+Alpha_Prostate$X <- rownames(Alpha_Prostate)
+Prostate_data <- Alpha_Prostate %>% left_join(Metadata_Prostate, by="X")
+Prostate_data$Case.Control <- ifelse(Prostate_data$Case.Control==1, "Case", "Control")
+
+Alpha_CRC$X <- rownames(Alpha_CRC)
+CRC_data <- Alpha_CRC %>% left_join(Metadata_CRC, by="X")
+CRC_data$Case.Control <- ifelse(CRC_data$Case.Control==1, "Case", "Control")
+
+Alpha_Breast_Cases$X <- rownames(Alpha_Breast_Cases)
+Breast_case_data <- Alpha_Breast_Cases %>% left_join(Metadata_Breast_Cases, by="X")
+Breast_case_data$Case.Control <- ifelse(Breast_case_data$Case.Control==1, "Case", "Control")
+
+Alpha_Prostate_Cases$X <- rownames(Alpha_Prostate_Cases)
+Prostate_case_data <- Alpha_Prostate_Cases %>% left_join(Metadata_Prostate_Cases, by="X")
+Prostate_case_data$Case.Control <- ifelse(Prostate_case_data$Case.Control==1, "Case", "Control")
+
+Alpha_CRC_Cases$X <- rownames(Alpha_CRC_Cases)
+CRC_case_data <- Alpha_CRC_Cases %>% left_join(Metadata_CRC_Cases, by="X")
+CRC_case_data$Case.Control <- ifelse(CRC_case_data$Case.Control==1, "Case", "Control")
+
+
+Breast_data$age_diff <- Breast_data$YEARS_SINCE_BC
+Prostate_data$age_diff <- Prostate_data$YEARS_SINCE_PC
+CRC_data$age_diff <- CRC_data$YEARS_SINCE_CRC_CANCER
+
+Breast_data$Type <- "Breast"
+Prostate_data$Type <- "Prostate"
+CRC_data$Type <- "Colon"
+
+Breast_data$Case.Control <- factor(Breast_data$Case.Control, levels=c("Control", "Case"))
+Prostate_data$Case.Control <- factor(Prostate_data$Case.Control, levels=c("Control", "Case"))
+CRC_data$Case.Control <- factor(CRC_data$Case.Control, levels=c("Control","Case"))
+
+Breast_data <- remove_non_matching_caseIDS(Breast_data)
+Prostate_data <- remove_non_matching_caseIDS(Prostate_data)
+CRC_data <- remove_non_matching_caseIDS(CRC_data)
+
+Breast_data_comb <- Breast_data %>% select(faith_pd, shannon, pielou_e, observed_otus, X, Case.Control, age_diff, Type, CaseID, Extraction_Number)
+Prostate_data_comb <- Prostate_data %>% select(faith_pd, shannon, pielou_e, observed_otus, X, Case.Control, age_diff, Type, CaseID, Extraction_Number)
+CRC_data_comb <- CRC_data %>% select(faith_pd, shannon, pielou_e, observed_otus, X, Case.Control, age_diff, Type, CaseID, Extraction_Number)
+
+
+Combined_data <- rbind(Breast_data_comb, Prostate_data_comb, CRC_data_comb)
+
+Breast_data <- Combined_data %>% filter(Type=="Breast")
+CRC_data <- Combined_data %>% filter(Type=="Colon")
+Prostate_data <- Combined_data %>% filter(Type=="Prostate")
+```
+
+```{r load_feature_data}
+
+ASV_Breast <- readRDS("~/Private/Previous_Cancer_Project/Data/ASV_table_breast.RDS")
+ASV_Breast <- ASV_Breast[-which(rowSums(ASV_Breast)==0),]
+
+ASV_Breast <- ASV_Breast[,Breast_data$X]
+
+
+ASV_CRC <- readRDS("~/Private/Previous_Cancer_Project/Data/ASV_table_CRC.RDS")
+ASV_CRC <- ASV_CRC[-which(rowSums(ASV_CRC)==0),]
+ASV_CRC <- ASV_CRC[,CRC_data$X]
+
+
+ASV_Prostate <- readRDS("~/Private/Previous_Cancer_Project/Data/ASV_table_Prostate.RDS")
+ASV_Prostate <- ASV_Prostate[-which(rowSums(ASV_Prostate)==0),]
+ASV_Prostate <- ASV_Prostate[,Prostate_data$X]
+
+
+
+
+ASV_Breast_filt <- remove_rare_features(ASV_Breast, cutoff_pro = 0.05)
+ASV_Prostate_filt <- remove_rare_features(ASV_Prostate, cutoff_pro = 0.05)
+ASV_CRC_filt <- remove_rare_features(ASV_CRC, cutoff_pro = 0.05)
+
+
+## load in Genus
+Genus_Breast <- readRDS("~/Private/Previous_Cancer_Project/Data/Genus_table_breast.RDS")
+Genus_Breast <- Genus_Breast[-which(rowSums(Genus_Breast)==0),]
+Genus_Breast <- Genus_Breast[,Breast_data$X]
+
+
+Genus_CRC <- readRDS("~/Private/Previous_Cancer_Project/Data/Genus_table_CRC.RDS")
+Genus_CRC <- Genus_CRC[-which(rowSums(Genus_CRC)==0),]
+Genus_CRC <- Genus_CRC[,CRC_data$X]
+
+Genus_Prostate <- readRDS("~/Private/Previous_Cancer_Project/Data/Genus_table_prostate.RDS")
+Genus_Prostate <- Genus_Prostate[-which(rowSums(Genus_Prostate)==0),]
+Genus_Prostate <- Genus_Prostate[,Prostate_data$X]
+
+
+Genus_Breast_filt <- remove_rare_features(Genus_Breast, cutoff_pro = 0.05)
+Genus_Prostate_filt <- remove_rare_features(Genus_Prostate, cutoff_pro = 0.05)
+Genus_CRC_filt <- remove_rare_features(Genus_CRC, cutoff_pro = 0.05)
+```
+
+```{r}
+ASV_Breast_CLR <- data.frame(apply(ASV_Breast + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_CRC_CLR <- data.frame(apply(ASV_CRC + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_Prostate_CLR <- data.frame(apply(ASV_Prostate + 1, 2, function(x){log(x) - mean (log(x))}), check.names = F)
+
+ASV_Breast_CLR_flip <- data.frame(t(ASV_Breast_CLR), check.names = F)
+ASV_Breast_CLR_flip$X <- rownames(ASV_Breast_CLR_flip)
+
+ASV_CRC_CLR_flip <- data.frame(t(ASV_CRC_CLR), check.names = F)
+ASV_CRC_CLR_flip$X <- rownames(ASV_CRC_CLR_flip)
+
+ASV_Prostate_CLR_flip <- data.frame(t(ASV_Prostate_CLR), check.names = F)
+ASV_Prostate_CLR_flip$X <- rownames(ASV_Prostate_CLR_flip)
+
+Genus_Breast_CLR <- data.frame(apply(Genus_Breast + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_CRC_CLR <- data.frame(apply(Genus_CRC + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_Prostate_CLR <- data.frame(apply(Genus_Prostate + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+
+Genus_Breast_CLR_flip <- data.frame(t(Genus_Breast_CLR), check.names = F)
+Genus_Breast_CLR_flip$X <- rownames(Genus_Breast_CLR_flip)
+
+Genus_CRC_CLR_flip <- data.frame(t(Genus_CRC_CLR), check.names = F)
+Genus_CRC_CLR_flip$X <- rownames(Genus_CRC_CLR_flip)
+
+Genus_Prostate_CLR_flip <- data.frame(t(Genus_Prostate_CLR), check.names = F)
+Genus_Prostate_CLR_flip$X <- rownames(Genus_Prostate_CLR_flip)
+
+
+ASV_Breast_RA <- sweep(ASV_Breast, 2, colSums(ASV_Breast), '/')
+ASV_CRC_RA <- sweep(ASV_CRC, 2, colSums(ASV_CRC), '/')
+ASV_Prostate_RA <- sweep(ASV_Prostate, 2, colSums(ASV_Prostate), '/')
+
+ASV_Breast_RA_flip <- data.frame(t(ASV_Breast_RA), check.names=F)
+ASV_Breast_RA_flip$X <- rownames(ASV_Breast_RA_flip)
+
+ASV_CRC_RA_flip <- data.frame(t(ASV_CRC_RA), check.names = F)
+ASV_CRC_RA_flip$X <- rownames(ASV_CRC_RA_flip)
+
+ASV_Prostate_RA_flip <- data.frame(t(ASV_Prostate_RA), check.names = F)
+ASV_Prostate_RA_flip$X <- rownames(ASV_Prostate_RA_flip)
+
+Genus_Breast_RA <- sweep(Genus_Breast, 2, colSums(Genus_Breast), '/')
+Genus_CRC_RA <- sweep(Genus_CRC, 2, colSums(Genus_CRC), '/')
+Genus_Prostate_RA <- sweep(Genus_Prostate, 2, colSums(Genus_Prostate), '/')
+
+Genus_Breast_RA_flip <- data.frame(t(Genus_Breast_RA), check.names = F)
+Genus_Breast_RA_flip$X <- rownames(Genus_Breast_RA_flip)
+
+Genus_CRC_RA_flip <- data.frame(t(Genus_CRC_RA), check.names = F)
+Genus_CRC_RA_flip$X <- rownames(Genus_CRC_RA_flip)
+
+Genus_Prostate_RA_flip <- data.frame(t(Genus_Prostate_RA), check.names = F)
+Genus_Prostate_RA_flip$X <- rownames(Genus_Prostate_RA_flip)
+```
+
+```{r}
+#takes in the results of each tool,
+#filters it out to only include taxa within the list
+#recorrects the p-values.
+
+Comb_p_vals <- function(aldex,ancom,corncob,maaslin2, feat_list){
+  aldex$feature <- rownames(aldex)
+  aldex <- aldex[intersect(feat_list,rownames(aldex)),]
+  ## we need to sort them all into the same order
+  if(sum(grepl("ControlCase", colnames(aldex)))){
+    aldex_sub <- aldex[,c('feature', 'model.Case.ControlCase Pr(>|t|)')]
+  }else{
+    aldex_sub <- aldex[,c('feature', 'model.Case.Control Pr(>|t|)')]
+  }
+  
+  aldex_sub[,2] <- p.adjust(aldex_sub[,2], method="BH")
+  
+  ancom_sub <- ancom[,c('taxa_id', 'detected_0.8', 'detected_0.7')]
+  rownames(ancom_sub) <- ancom_sub[,"taxa_id"]
+  ancom_sub <- ancom_sub[intersect(feat_list,rownames(ancom_sub)),]
+  
+  ## have to clean up ancom_sub so that sig=0 and non-sig=1
+  ancom_sub$detected_0.8 <- ifelse(ancom_sub$detected_0.8==TRUE, 0, 1)
+  ancom_sub$detected_0.7 <- ifelse(ancom_sub$detected_0.7==TRUE, 0, 1)
+  
+  corncob_sub <- data.frame(feature=names(corncob$p),
+                            p_fdr=corncob$p)
+  
+  rownames(corncob_sub) <- corncob_sub$feature
+  
+  corncob_sub <- corncob_sub[intersect(feat_list,rownames(corncob_sub)),]
+  
+  corncob_sub[,2] <- p.adjust(corncob_sub[,2], method="BH")
+  ## fix corncob NAs and set them as 1 for our purpose... although this isn't totally correct...
+  corncob_sub$p_fdr[is.na(corncob_sub$p_fdr)] <- 1
+
+  maaslin2_p <- maaslin2[,c("feature", "pval")]
+  rownames(maaslin2_p) <- maaslin2_p$feature
+  maaslin2_p <- maaslin2_p[intersect(feat_list, rownames(maaslin2_p)),]
+  maaslin2_p[,2] <- p.adjust(maaslin2_p[,2], method="BH")
+  
+  merge1 <- merge(x=aldex_sub, y=ancom_sub, by.x='feature', by.y='taxa_id', all=T)
+  merge2 <- merge(x=merge1, y=corncob_sub, by.x='feature', by.y='feature', all=T)
+  merge3 <- merge(x=merge2, y=maaslin2_p, by.x='feature', by.y='feature', all=T)
+  merge3$detected_0.8[is.na(merge3$detected_0.8)] <- 1
+  merge3$detected_0.7[is.na(merge3$detected_0.7)] <- 1
+  merge3$pval[is.na(merge3$pval)] <- 1
+  return(merge3)
+  
+}
+
+
+#all the model estimate represent different "units" but we only care about sign in this case.
+#in the case on ancom we will calculate the direction based on the difference in the mean CLR values
+Comb_est_vals <- function(aldex, ancom, corncob, maaslin2, feat_list, clr_tab, meta, bin=T){
+  
+  aldex$feature <- rownames(aldex)
+  aldex <- aldex[intersect(feat_list,rownames(aldex)),]
+  ## we need to sort them all into the same order
+  if(sum(grepl("ControlCase", colnames(aldex)))){
+    aldex_sub <- aldex[,c('feature', 'model.Case.ControlCase Estimate')]
+  }else{
+    aldex_sub <- aldex[,c('feature', 'model.Case.Control Estimate')]
+  }
+  
+  #ancom will need to be calculated from the CLR values as it does not by default output CLR values...
+    
+  clr_tab <- clr_tab[,feat_list]
+  clr_tab$X <- rownames(clr_tab)
+  
+  clr_tab <- clr_tab %>% left_join(meta[,c("X", "Case.Control")])
+  clr_tab <- clr_tab %>% group_by(Case.Control) %>% summarize_if(is.numeric, mean, na.rm=T)
+  ancom_ests <- unlist(clr_tab[2,]) - unlist(clr_tab[1,])
+  
+  
+  corncob_sub <- extract_CC_Est(corncob)
+  rownames(corncob_sub) <- corncob_sub$feat
+  corncob_sub <- corncob_sub[intersect(feat_list, rownames(corncob_sub)),]
+  
+  maaslin2_p <- maaslin2[,c("feature", "coef")]
+  rownames(maaslin2_p) <- maaslin2_p$feature
+  maaslin2_p <- maaslin2_p[intersect(feat_list, rownames(maaslin2_p)),]
+  
+
+  comb_tab <- aldex_sub %>% full_join(data.frame(feature=names(ancom_ests), ancom_est=ancom_ests))
+  comb_tab <- comb_tab %>% full_join(corncob_sub, by="feature")
+  comb_tab <- comb_tab %>% full_join(maaslin2_p, by="feature")
+  
+  if(bin){
+    
+    comb_tab$aldex_bin <- sapply(comb_tab[,2], bin_cov)
+    comb_tab$ancom_bin <- sapply(comb_tab[,3], bin_cov)
+    comb_tab$cc_bin <- sapply(comb_tab[,4], bin_cov)
+    comb_tab$ma_bin <- sapply(comb_tab[,5], bin_cov)
+  }
+  
+  comb_tab <- comb_tab %>% filter(feature != "Case.Control")
+  return(comb_tab)
+}
+
+
+#convert values to + or -
+bin_cov <- function(x){
+  if(is.na(x)){
+    return(x)
+  }
+  
+  if(x > 0){
+    x <- 1
+  }else if(x < 0){
+    x <- -1
+  }
+
+  
+  return(x)
+}
+
+#extract model estimates from the corncob object.
+extract_CC_Est <- function(corncob){
+  
+  ret_df <- data.frame(feature=names(corncob$p))
+  ret_df$cc_est <- NA
+  for(i in 1:length(names(corncob$p))){
+    if(is.na(corncob$all_models[[i]]))
+      est_val <- NA
+    else
+      est_val <- corncob$all_models[[i]]$coefficients["mu.Case.ControlCase",1]
+    
+    ret_df[i,"cc_est"] <- est_val
+  }
+  
+  return(ret_df)
+}
+
+
+## set non-sig estimates to 0
+filt_non_sig_est <- function(pvals, ests, pval_thres){
+  ret_ests <- ests
+  for(i in 1:nrow(pvals)){
+    for(j in 2:ncol(pvals)){
+      if(pvals[i,j] > pval_thres){
+        ret_ests[i,j] <- 0
+        ret_ests[i,j+4] <- 0
+      }
+    }
+  }
+  return(ret_ests)
+}
+
+```
+
+# function test
+
+## comb p-value
+```{r}
+#test the above function
+taxa <- c("taxa1", "taxa2", "taxa3", "taxa4", "taxa5", "taxa6")
+
+test_aldex <- data.frame(feature=taxa,
+                         `model.Case.ControlCase Pr(>|t|)`=c(0.0001, 0.001, 0.01, 0.1, 0.2, 0.9),
+                         `model.Case.ControlCase Estimate`=c(12,0.2,1,0.01,-1,0),
+                         check.names = F)
+
+rownames(test_aldex) <- test_aldex$feature
+test_ancom <- data.frame(taxa_id=taxa,
+                         detected_0.8=c(T,T,F,F,F,F),
+                         detected_0.7=c(T,T,T,F,F,F))
+
+test_corncob <- list(feature=taxa,
+                           p=c(0.0001, 0.001, 0.01, 0.1, 0.2, 0.9))
+names(test_corncob$p) <- taxa
+
+test_maaslin2 <- data.frame(feature=taxa,
+                            pval=c(0.0001, 0.001, 0.01, 0.1, 0.2, 0.9),
+                            coef=c(13,1,4,0,-10,1))
+
+test_comb_p <- Comb_p_vals(aldex = test_aldex,
+                          ancom = test_ancom,
+                          corncob = test_corncob,
+                          maaslin2 = test_maaslin2,
+                          feat_list = taxa[-3])
+
+test_comb_p <- Comb_p_vals(aldex = test_aldex,
+                          ancom = test_ancom,
+                          corncob = test_corncob,
+                          maaslin2 = test_maaslin2,
+                          feat_list = taxa)
+
+
+
+samples <- paste0(seq(1,200), "sample", sep="")
+test_clr_tab <- data.frame(taxa1=c(rnorm(100), rnorm(100,10)),
+                      taxa2=c(rnorm(100), rnorm(100, 2)),
+                      taxa3=c(rnorm(100), rnorm(100, 4)),
+                      taxa4=c(rnorm(100), rnorm(100)),
+                      taxa5=c(rnorm(100), rnorm(100,-10)),
+                      taxa6=c(rnorm(100), rnorm(100,1.1)),
+                      row.names = samples)
+                      
+test_meta <- data.frame(Case.Control=c(rep("Case",100), rep("Control", 100)),
+                        X=samples)
+
+```
+
+## test est extraction
+
+```{r}
+test_list <- list(coefficients=data.frame(test=c(12,123124,21),
+                                          row.names = c("mu.Case.ControlCase","1","2")))
+
+test_corncob$all_models <- list(test_list,
+                                test_list,
+                                test_list,
+                                test_list,
+                                test_list,
+                                test_list)
+
+test_CC_ext <- extract_CC_Est(test_corncob)
+### works as expected.
+
+test_est <- Comb_est_vals(aldex = test_aldex, ancom = test_ancom, corncob = test_corncob, 
+                          maaslin2 = test_maaslin2, feat_list = taxa, clr_tab = test_clr_tab, 
+                          meta = test_meta, bin=T)
+
+## works as expected
+```
+
+## test filtering
+```{r}
+#remove ancom detected 0.7 column
+sig_test <- filt_non_sig_est(test_comb_p[,-4], test_est, 0.05)
+sig_test
+
+#all checks out right!
+```
+
+# Heat maps
+
+## ASV
+
+```{r}
+Breast_asvs <- rownames(ASV_Breast_filt)
+Colon_asvs <- rownames(ASV_CRC_filt)
+Prostate_asvs <- rownames(ASV_Prostate_filt)
+```
+
+
+```{r}
+Comb_Breast_ASV <- Comb_p_vals(aldex = Breast_ASV_aldex, 
+                               ancom = Breast_ASV_ancom, 
+                               corncob = Breast_ASV_corncob, 
+                               maaslin2 = Breast_ASV_maaslin2,
+                               feat_list = Breast_asvs)
+
+
+rownames(Comb_Breast_ASV) <- Comb_Breast_ASV$feature
+
+Comb_Breast_ASV_est <- Comb_est_vals(aldex=Breast_ASV_aldex,
+                                     ancom=Breast_ASV_ancom,
+                                     corncob=Breast_ASV_corncob,
+                                     maaslin2=Breast_ASV_maaslin2,
+                                     feat_list = Breast_asvs,
+                                     ASV_Breast_CLR_flip,
+                                     Breast_data,
+                                     bin=T)
+
+
+## subset table to features found sig in atleast one column
+Sig_Breast_ASV <- Comb_Breast_ASV %>% filter(`model.Case.ControlCase Pr(>|t|)` < 0.05 | pval < 0.05 | p_fdr < 0.05 | detected_0.7 < 0.05) %>%
+  mutate_if(is.numeric, round, 4)
+
+Sig_Breast_ASV_est <- Comb_Breast_ASV_est %>% filter(feature %in% Sig_Breast_ASV$feature)
+Sig_Breast_ASV_est <- filt_non_sig_est(Sig_Breast_ASV[,-3], Sig_Breast_ASV_est, 0.05)
+
+
+
+Comb_Prostate_ASV <- Comb_p_vals(aldex=Prostate_ASV_aldex,
+                                 ancom=Prostate_ASV_ancom,
+                                 corncob = Prostate_ASV_corncob,
+                                 maaslin2 = Prostate_ASV_maaslin2,
+                                 feat_list = Prostate_asvs)
+
+Comb_Prostate_ASV_est <- Comb_est_vals(aldex=Prostate_ASV_aldex,
+                                     ancom=Prostate_ASV_ancom,
+                                     corncob=Prostate_ASV_corncob,
+                                     maaslin2=Prostate_ASV_maaslin2,
+                                     feat_list = Prostate_asvs,
+                                     ASV_Prostate_CLR_flip,
+                                     Prostate_data,
+                                     bin=T)
+
+
+Sig_Prostate_ASV <- Comb_Prostate_ASV %>% filter(`model.Case.ControlCase Pr(>|t|)` < 0.05 | pval < .05 | p_fdr < .05 | detected_0.7 < .05) %>%
+  mutate_if(is.numeric, round, 4)
+
+Sig_Prostate_ASV_est <- Comb_Prostate_ASV_est %>% filter(feature %in% Sig_Prostate_ASV$feature)
+Sig_Prostate_ASV_est <- filt_non_sig_est(Sig_Prostate_ASV[,-3], Sig_Prostate_ASV_est, 0.05)
+
+Comb_Colon_ASV <- Comb_p_vals(aldex=Colon_ASV_aldex,
+                              ancom=Colon_ASV_ancom,
+                              corncob = Colon_ASV_corncob,
+                              maaslin2 = Colon_ASV_maaslin2,
+                              feat_list = Colon_asvs)
+
+Sig_Colon_ASV <- Comb_Colon_ASV %>% filter(`model.Case.ControlCase Pr(>|t|)` < .05 | pval < .05 | p_fdr < .05 | detected_0.7 < .05) %>%
+  mutate_if(is.numeric, round, 4)
+
+
+
+Comb_Colon_ASV_est <- Comb_est_vals(aldex=Colon_ASV_aldex,
+                                     ancom=Colon_ASV_ancom,
+                                     corncob=Colon_ASV_corncob,
+                                     maaslin2=Colon_ASV_maaslin2,
+                                     feat_list = Colon_asvs,
+                                     ASV_CRC_CLR_flip,
+                                     CRC_data,
+                                     bin=T)
+Sig_Colon_ASV_est <- Comb_Colon_ASV_est %>% filter(feature %in% Sig_Colon_ASV$feature)
+Sig_Colon_ASV_est <- filt_non_sig_est(Sig_Colon_ASV[,-3], Sig_Colon_ASV_est, 0.05)
+
+```
+
+
+```{r}
+all_sig_asvs <- c(Sig_Breast_ASV$feature, Sig_Prostate_ASV$feature, Sig_Colon_ASV$feature)
+all_sig_asvs <- unique(all_sig_asvs)
+
+
+
+#get prostate cancer abundances for sig taxa
+Prostate_sig_abundances <- ASV_Prostate_RA_flip[,all_sig_asvs]
+Prostate_sig_abundances$X <- rownames(Prostate_sig_abundances)
+
+#get breast cancer abundances for sig taxa
+Breast_sig_abundances <- ASV_Breast_RA_flip[,all_sig_asvs]
+Breast_sig_abundances$X <- rownames(Breast_sig_abundances)
+
+#get colon cancer abundances for sig taxa
+Colon_sig_abundances <- ASV_CRC_RA_flip[,all_sig_asvs]
+Colon_sig_abundances$X <- rownames(Colon_sig_abundances)
+```
+
+### heatmap functions
+```{r}
+make_all_three_heat <- function(list_abund, list_pval, list_est, log=F, display_val=F){
+  
+  heat_list <- list()
+  
+  max_abund=-1
+  
+  for(i in names(list_abund)){
+    temp_abund <- get_max_abund(list_abund[[i]], log)
+    if(temp_abund > max_abund)
+      max_abund <- temp_abund
+  }
+  
+  
+  if(log){
+        for(i in names(list_abund)){
+          heat_list[[i]] <- heatmap_function(abund=list_abund[[i]], pval = list_pval[[i]], est=list_est[[i]], gradient = seq(-5, max_abund, by=0.1), main = i, show_row=F,
+                                         show_legend = F, log=T, display_vals=display_val)
+        }
+  
+  #draw labels
+        labs_heat <- heatmap_function(abund=list_abund[[1]], pval = list_pval[[i]], est=list_est[[i]], gradient = seq(-5, max_abund, by=0.1), main = "", show_row=T,
+                                         show_legend = T, log=T, display_vals=display_val)
+  }else{
+      for(i in names(list_abund)){
+        heat_list[[i]] <- heatmap_function(abund=list_abund[[i]], pval = list_pval[[i]], est=list_est[[i]], gradient = seq(0, max_abund, by=0.001), main = i, show_row=F,
+                                         show_legend = F, display_vals=display_val)
+      }
+  
+  #draw labels
+      labs_heat <- heatmap_function(abund=list_abund[[1]], pval = list_pval[[i]], est=list_est[[i]], gradient = seq(0, max_abund, by=0.001), main = "", show_row=T,
+                                         show_legend = T, display_vals=display_val)
+  }
+
+  # not the best way to do this...
+  row_labs <- labs_heat$gtable
+  #row_labs <- gtable_remove_grobs(row_labs, "main")
+  row_labs <- gtable_remove_grobs(row_labs, "matrix")
+  row_labs <- gtable_remove_grobs(row_labs, "col_names")
+  row_labs <- gtable_remove_grobs(row_labs, "row_annotation")
+  row_labs <- gtable_remove_grobs(row_labs, "row_annotation_names")
+  
+  final_plot <- plot_grid(heat_list[[1]]$gtable, heat_list[[2]]$gtable, heat_list[[3]]$gtable, row_labs,
+                          ncol=4, rel_widths = c(1,1,1,2))
+  return(final_plot)
+}
+
+
+heatmap_function <- function(abund, pval, est, gradient, main, show_row=T, show_legend=T, log=F, display_vals=F){
+  abund <- abund %>% select(-age_diff, -shannon, -pielou_e, -observed_otus, -faith_pd)
+  mean_abund <- abund %>% group_by(Case.Control) %>% summarize(across(where(is.numeric), ~ mean(.x))) %>% as.data.frame()
+  mean_abund[mean_abund==0] <- NA
+  rownames(mean_abund) <- mean_abund[,1]
+  mean_abund <- mean_abund[,-1]
+  mean_abund_flip <- t(mean_abund)
+  # if(log){
+  #     message(max(log(mean_abund_flip)))
+  # }else{
+  #     message(max(mean_abund_flip))
+  # }
+
+  
+  mean_abund_flip_full <- data.frame(mean_abund_flip)
+  mean_abund_flip_full$feature <- rownames(mean_abund_flip)
+  
+  
+  #full_data <- mean_abund_flip_full %>% left_join(pval)
+  #full_data <- full_data %>% select(-detected_0.8) %>% mutate_if(is.numeric, funs(ifelse(is.na(.), 1, .)))
+  #full_data <- full_data %>% mutate_at(vars('model.Case.ControlCase Pr(>|t|)', 'detected_0.7', 'p_fdr', 'pval'),
+                    #                                   function(x) ifelse(x <= 0.1, 1, 0))
+  
+  full_data <- mean_abund_flip_full %>% left_join(est)
+  full_data <- full_data %>% mutate_if(is.numeric, funs(ifelse(is.na(.), 0, .)))
+  
+  
+  rownames(full_data) <- full_data$feature
+  
+  
+  colnames(full_data)[8:11] <- c("ALDEx2", "ANCOMII", "Corncob", "MaAsLin2")
+  
+  anno_cols <- list()
+  ## possibly that all are postive or negative assocations...
+  
+  aldex2_range <- range(full_data$ALDEx2)
+  ancom_range <- range(full_data$ANCOMII)
+  corncob_range <- range(full_data$Corncob)
+  maaslin_range <- range(full_data$MaAsLin2)
+  
+  if(identical(aldex2_range,c(-1, 1))){
+    anno_cols[["ALDEx2"]] <- c("blue", "white", "red")
+  }else if(identical(aldex2_range,c(-1, 0))){
+        anno_cols[["ALDEx2"]] <- c("blue", "white")
+  }else if(identical(aldex2_range,c(0, 0))){
+        anno_cols[["ALDEx2"]] <- c("white")
+  }else if(identical(aldex2_range,c(0, 1))){
+        anno_cols[["ALDEx2"]] <- c("white", "red")
+  }else if(identical(aldex2_range,c(-1,-1))){
+        anno_cols[["ALDEx2"]] <- c("blue")
+  }else if(identical(aldex2_range,c(1,1))){
+        anno_cols[["ALDEx2"]] <- c("red")
+  }
+
+  if(identical(ancom_range,c(-1, 1))){
+    anno_cols[["ANCOMII"]] <- c("blue", "white", "red")
+  }else if(identical(ancom_range,c(-1, 0))){
+        anno_cols[["ANCOMII"]] <- c("blue", "white")
+  }else if(identical(ancom_range,c(0, 0))){
+        anno_cols[["ANCOMII"]] <- c("white")
+  }else if(identical(ancom_range,c(0, 1))){
+        anno_cols[["ANCOMII"]] <- c("white", "red")
+  }else if(identical(ancom_range,c(-1,-1))){
+        anno_cols[["ANCOMII"]] <- c("blue")
+  }else if(identical(ancom_range,c(1,1))){
+        anno_cols[["ANCOMII"]] <- c("red")
+  }
+  
+  if(identical(corncob_range,c(-1, 1))){
+    anno_cols[["Corncob"]] <- c("blue", "white", "red")
+  }else if(identical(corncob_range,c(-1, 0))){
+        anno_cols[["Corncob"]] <- c("blue", "white")
+  }else if(identical(corncob_range,c(0, 0))){
+        anno_cols[["Corncob"]] <- c("white")
+  }else if(identical(corncob_range,c(0, 1))){
+        anno_cols[["Corncob"]] <- c("white")
+  }else if(identical(corncob_range,c(-1,-1))){
+        anno_cols[["Corncob"]] <- c("blue")
+  }else if(identical(corncob_range,c(1,1))){
+        anno_cols[["Corncob"]] <- c("red")
+  }
+
+  if(identical(maaslin_range,c(-1, 1))){
+    anno_cols[["MaAsLin2"]] <- c("blue", "white", "red")
+  }else if(identical(maaslin_range,c(-1, 0))){
+        anno_cols[["MaAsLin2"]] <- c("blue", "white")
+  }else if(identical(maaslin_range,c(0, 0))){
+        anno_cols[["MaAsLin2"]] <- c("white")
+  }else if(identical(maaslin_range,c(0, 1))){
+        anno_cols[["MaAsLin2"]] <- c("white", "red")
+  }else if(identical(maaslin_range,c(-1,-1))){
+        anno_cols[["MaAsLin2"]] <- c("blue")
+  }else if(identical(maaslin_range,c(1,1))){
+        anno_cols[["MaAsLin2"]] <- c("red")
+  }
+  
+  #return(list(full_data, anno_cols))
+  if(!show_row){
+    row_labs <- rep("", nrow(mean_abund_flip))
+  }else{
+   row_labs <- rownames(mean_abund_flip)
+  }
+  if(log){
+      pheatmap(log10(mean_abund_flip),
+         cluster_cols = F,
+         cluster_rows = F,
+         angle_col=90,
+         annotation_row = full_data[,8:11],
+         annotation_colors = anno_cols,
+         annotation_legend = FALSE,
+         main=main,
+         color= colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(gradient)),
+         breaks=gradient,
+         labels_row = row_labs,
+         legend=show_legend,
+         display_numbers = display_vals,
+         na_col = "grey")
+    
+  }else{
+      pheatmap(mean_abund_flip,
+         cluster_cols = F,
+         cluster_rows = F,
+         angle_col=90,
+         annotation_row = full_data[,8:11],
+         annotation_colors = anno_cols,
+         annotation_legend = FALSE,
+         main=main,
+         color= colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(gradient)),
+         breaks=gradient,
+         labels_row = row_labs,
+         legend=show_legend,
+         display_number=display_vals,
+         number_format = "%.1e",
+         na_col="grey")
+  }
+
+}
+
+get_max_abund <- function(x, log=F){
+  x <- x %>% select(-age_diff, -shannon, -pielou_e, -observed_otus, -faith_pd)
+  mean_abund <- x %>% group_by(Case.Control) %>% summarize(across(where(is.numeric), ~ mean(.x))) %>% as.data.frame()
+  
+  rownames(mean_abund) <- mean_abund[,1]
+  mean_abund <- mean_abund[,-1]
+  mean_abund_flip <- t(mean_abund)
+  if(log)
+    return(max(log10(mean_abund_flip)))
+  return(max(mean_abund_flip))
+  
+}
+
+```
+
+### teseting heatmap function
+
+```{r}
+test_clr_tab <- data.frame(taxa1=c(rep(0.1, 100), rep(0.5,100)),
+                      taxa2=c(rep(0.001,100), rep(0.003,100)),
+                      taxa3=c(rep(0.0003, 100), rnorm(0.0003, 100)),
+                      taxa4=c(rep(.2, 100), rep(.2,100)),
+                      taxa5=c(rep(0.0001,100), rep(0.002,100)),
+                      taxa6=c(rep(0.0001,100), rep(0.001,100)),
+                      row.names = samples)
+
+test_clr_tab$faith_pd <- 1
+test_clr_tab$shannon <- 1
+test_clr_tab$pielou_e <- 1
+test_clr_tab$observed_otus <- 1  
+test_clr_tab$age_diff <- 1
+test_clr_tab$Case.Control <- test_meta$Case.Control
+
+heatmap_function(abund=test_clr_tab, pval=test_comb_p, est=test_est, gradient = seq(-5, 0, 0.1), main="test", show_row=T, show_legend = T, log=T, display_vals = T)
+
+#heatmap checks out.
+get_max_abund(test_clr_tab)
+get_max_abund(test_clr_tab, log=T)
+#works as expected
+```
+
+## make heatmaps
+```{r}
+
+#read in ASV classifications so i can replace the labels
+Taxa_classifications <- read.table("~/Private/Sequences/Redo_Combined_Data/deblur/Freq_filt_18/taxonomy/taxa/taxonomy.tsv", sep="\t",
+                                   header=T, stringsAsFactors = F)
+
+Taxa_classifications$Taxon <- gsub(".*D_.__(?=.*D_.__)", "", Taxa_classifications$Taxon, perl=T)
+Taxa_classifications$Taxon <- make.unique(Taxa_classifications$Taxon)
+
+Rename_Prostate_sig_abundances <- Prostate_sig_abundances
+Rename_Breast_sig_abundances <- Breast_sig_abundances
+Rename_Colon_sig_abundances <- Colon_sig_abundances
+
+#match them while removing the column that represents the sample name.
+colnames(Rename_Prostate_sig_abundances)[-ncol(Rename_Prostate_sig_abundances)] <- 
+  Taxa_classifications$Taxon[match(colnames(Prostate_sig_abundances)[-ncol(Rename_Prostate_sig_abundances)], Taxa_classifications$Feature.ID)]
+
+#see above
+colnames(Rename_Breast_sig_abundances)[-ncol(Rename_Prostate_sig_abundances)] <- 
+  Taxa_classifications$Taxon[match(colnames(Breast_sig_abundances)[-ncol(Rename_Prostate_sig_abundances)], Taxa_classifications$Feature.ID)]
+
+#see above
+colnames(Rename_Colon_sig_abundances)[-ncol(Rename_Colon_sig_abundances)] <- Taxa_classifications$Taxon[match(colnames(Colon_sig_abundances)[-ncol(Rename_Colon_sig_abundances)], Taxa_classifications$Feature.ID)]
+
+
+Rename_Sig_Breast_ASV <- Sig_Breast_ASV
+Rename_Sig_Prostate_ASV <- Sig_Prostate_ASV
+Rename_Sig_Colon_ASV <- Sig_Colon_ASV
+
+#rename the p-value table
+Rename_Sig_Breast_ASV$feature <- Taxa_classifications$Taxon[match(Sig_Breast_ASV$feature, Taxa_classifications$Feature.ID)]
+
+Rename_Sig_Prostate_ASV$feature <- Taxa_classifications$Taxon[match(Sig_Prostate_ASV$feature, Taxa_classifications$Feature.ID)]
+
+Rename_Sig_Colon_ASV$feature <- Taxa_classifications$Taxon[match(Sig_Colon_ASV$feature, Taxa_classifications$Feature.ID)]
+
+#rename the est table
+Rename_Sig_Breast_ASV_est <- Sig_Breast_ASV_est
+Rename_Sig_Prostate_ASV_est <- Sig_Prostate_ASV_est
+Rename_Sig_Colon_ASV_est <- Sig_Colon_ASV_est
+
+Rename_Sig_Breast_ASV_est$feature <- Taxa_classifications$Taxon[match(Sig_Breast_ASV_est$feature, Taxa_classifications$Feature.ID)]
+Rename_Sig_Prostate_ASV_est$feature <- Taxa_classifications$Taxon[match(Sig_Prostate_ASV_est$feature, Taxa_classifications$Feature.ID)]
+Rename_Sig_Colon_ASV_est$feature <- Taxa_classifications$Taxon[match(Sig_Colon_ASV_est$feature, Taxa_classifications$Feature.ID)]
+
+
+Full_Prostate_data <- Prostate_data %>% full_join(Rename_Prostate_sig_abundances, by="X")
+
+Full_Breast_Data <- Breast_data %>% full_join(Rename_Breast_sig_abundances, by="X")
+
+Full_Colon_Data <- CRC_data %>% full_join(Rename_Colon_sig_abundances, by="X")
+
+
+
+ASV_abund_list <- list(
+  Breast=Full_Breast_Data,
+  Prostate=Full_Prostate_data,
+  Colon=Full_Colon_Data
+)
+
+
+ASV_p_list <- list(
+  Breast=Rename_Sig_Breast_ASV,
+  Prostate=Rename_Sig_Prostate_ASV,
+  Colon=Rename_Sig_Colon_ASV
+)
+
+ASV_est_list <- list(
+  Breast=Rename_Sig_Breast_ASV_est,
+  Prostate=Rename_Sig_Prostate_ASV_est,
+  Colon=Rename_Sig_Colon_ASV_est
+)
+
+test <- heatmap_function(abund=Full_Colon_Data, pval=Rename_Sig_Colon_ASV, est=Rename_Sig_Colon_ASV_est,
+                         gradient = seq(-5, 0, by=0.1), main = "breast", show_row = T, show_legend = T, log = T, display_vals = T)
+
+test
+
+DA_heats <- make_all_three_heat(list_abund = ASV_abund_list, ASV_p_list, list_est=ASV_est_list, log=T, display_val = T)
+DA_heats
+saveRDS(DA_heats, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Ret_PATH_ASV_DA_heats_show_diffs.RDS")
+```
+
+
+## Genus
+
+```{r}
+Breast_genus <- rownames(Genus_Breast_filt)
+Prostate_genus <- rownames(Genus_Prostate_filt)
+Colon_genus <- rownames(Genus_CRC_filt)
+
+```
+
+
+```{r}
+Comb_Breast_Genus <- Comb_p_vals(aldex = Breast_GENUS_aldex,
+                                 ancom = Breast_GENUS_ancom,
+                                 corncob = Breast_GENUS_corncob,
+                                 maaslin2 = Breast_GENUS_maaslin2,
+                                 feat_list = Breast_genus)
+
+Sig_Breast_Genus <- Comb_Breast_Genus %>% filter(`model.Case.ControlCase Pr(>|t|)` < 0.05 | pval < 0.05 | p_fdr < 0.05 | detected_0.7 < 0.05) %>%
+  mutate_if(is.numeric, round, 4)
+
+
+Comb_Breast_Genus_est <- Comb_est_vals(aldex=Breast_GENUS_aldex,
+                                       ancom=Breast_GENUS_ancom,
+                                       corncob=Breast_GENUS_corncob,
+                                       maaslin2 = Breast_GENUS_maaslin2,
+                                       feat_list = Breast_genus,
+                                       clr_tab = Genus_Breast_CLR_flip,
+                                       meta=Breast_data,
+                                       bin=T)
+
+Sig_Breast_Genus_est <- Comb_Breast_Genus_est %>% filter(feature %in% Sig_Breast_Genus$feature)
+Sig_Breast_Genus_est <- filt_non_sig_est(Sig_Breast_Genus[,-3], Sig_Breast_Genus_est, 0.05)
+
+
+Comb_Prostate_GENUS <- Comb_p_vals(aldex=Prostate_GENUS_aldex,
+                                   ancom = Prostate_GENUS_ancom,
+                                   corncob = Prostate_GENUS_corncob,
+                                   maaslin2 = Prostate_GENUS_maaslin2,
+                                   feat_list = Prostate_genus)
+
+Sig_Prostate_Genus <- Comb_Prostate_GENUS %>% filter(`model.Case.ControlCase Pr(>|t|)` < .05 | pval < .05 | p_fdr < .05| detected_0.7 < .05) %>%
+  mutate_if(is.numeric, round, 4)
+
+Comb_Prostate_Genus_est <- Comb_est_vals(aldex=Prostate_GENUS_aldex,
+                                         ancom=Prostate_GENUS_ancom,
+                                         corncob = Prostate_GENUS_corncob,
+                                         maaslin2 = Prostate_GENUS_maaslin2,
+                                         feat_list = Prostate_genus,
+                                         clr_tab = Genus_Prostate_CLR_flip,
+                                         meta=Prostate_data,
+                                         bin=T)
+
+
+Sig_Prostate_Genus_est <- Comb_Prostate_Genus_est %>% filter(feature %in% Sig_Prostate_Genus$feature)
+Sig_Prostate_Genus_est <- filt_non_sig_est(Sig_Prostate_Genus[,-3], Sig_Prostate_Genus_est, 0.05)
+
+
+Comb_Colon_GENUS <- Comb_p_vals(aldex=Colon_GENUS_aldex,
+                                ancom = Colon_GENUS_ancom,
+                                corncob = Colon_GENUS_corncob,
+                                maaslin2 = Colon_GENUS_maaslin2,
+                                feat_list = Colon_genus)
+
+Sig_Colon_Genus <- Comb_Colon_GENUS %>% filter(`model.Case.ControlCase Pr(>|t|)` < .05 | pval < .05 | p_fdr < .05| detected_0.7 < .05) %>%
+  mutate_if(is.numeric, round, 4)
+
+Comb_Colon_GENUS_est <- Comb_est_vals(aldex=Colon_GENUS_aldex,
+                                      ancom=Colon_GENUS_ancom,
+                                      corncob = Colon_GENUS_corncob,
+                                      maaslin2 = Colon_GENUS_maaslin2,
+                                      feat_list = Colon_genus,
+                                      clr_tab=Genus_CRC_CLR_flip,
+                                      meta=CRC_data,
+                                      bin=T)
+
+
+Sig_Colon_Genus_est <- Comb_Colon_GENUS_est %>% filter(feature %in% Sig_Colon_Genus$feature)
+Sig_Colon_Genus_est <- filt_non_sig_est(Sig_Colon_Genus[,-3], Sig_Colon_Genus_est, 0.05)
+```
+
+```{r}
+all_sig_genera <- c(Sig_Breast_Genus$feature, Sig_Prostate_Genus$feature, Sig_Colon_Genus$feature)
+all_sig_genera <- unique(all_sig_genera)
+
+
+Prostate_sig_abundances_genera <- Genus_Prostate_RA_flip[,all_sig_genera]
+Prostate_sig_abundances_genera$X <- rownames(Prostate_sig_abundances_genera)
+
+
+Breast_sig_abundances_genera <- Genus_Breast_RA_flip[,all_sig_genera]
+Breast_sig_abundances_genera$X <- rownames(Breast_sig_abundances)
+
+
+Colon_sig_abundances_genera <- Genus_CRC_RA_flip[,all_sig_genera]
+Colon_sig_abundances_genera$X <- rownames(Colon_sig_abundances_genera)
+```
+
+```{r}
+Full_Prostate_data_genera <- Prostate_data %>% full_join(Prostate_sig_abundances_genera, by="X")
+Full_Breast_data_genera <- Breast_data %>% full_join(Breast_sig_abundances_genera, by="X")
+Full_Colon_data_genera <- CRC_data %>% full_join(Colon_sig_abundances_genera, by="X")
+
+
+#fix Genera name
+colnames(Full_Breast_data_genera) <- gsub(".*D_.__(?=.*D_.__)", "", colnames(Full_Breast_data_genera), perl=T)
+colnames(Full_Prostate_data_genera) <- gsub(".*D_.__(?=.*D_.__)", "", colnames(Full_Prostate_data_genera), perl=T)
+colnames(Full_Colon_data_genera) <- gsub(".*D_.__(?=.*D_.__)", "", colnames(Full_Colon_data_genera), perl=T)
+
+Sig_Breast_Genus$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Breast_Genus$feature, perl=T)
+Sig_Prostate_Genus$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Prostate_Genus$feature, perl=T)
+Sig_Colon_Genus$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Colon_Genus$feature, perl=T)
+
+Sig_Breast_Genus_est$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Breast_Genus_est$feature, perl=T)
+Sig_Prostate_Genus_est$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Prostate_Genus_est$feature, perl=T)
+Sig_Colon_Genus_est$feature <- gsub(".*D_.__(?=.*D_.__)", "", Sig_Colon_Genus_est$feature, perl=T)
+
+
+Genus_abund_list <- list(
+  Breast=Full_Breast_data_genera,
+  Prostate=Full_Prostate_data_genera,
+  Colon=Full_Colon_data_genera
+)
+
+Genus_p_list <- list(
+  Breast=Sig_Breast_Genus,
+  Prostate=Sig_Prostate_Genus,
+  Colon=Sig_Colon_Genus
+)
+
+Genus_est_list <- list(
+  Breast=Sig_Breast_Genus_est,
+  Prostate=Sig_Prostate_Genus_est,
+  Colon=Sig_Colon_Genus_est
+)
+
+Genus_DA_heat <- make_all_three_heat(list_abund = Genus_abund_list, list_pval = Genus_p_list, list_est = Genus_est_list, log = T, display_val = T)
+Genus_DA_heat
+
+saveRDS(Genus_DA_heat, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS/Ret_PATH_Genus_DA_heat_show_all.RDS")
+```
+
+# Combined plots
+
+
+```{r}
+make_comb_plots <- function(df){
+  plot_list <- list()
+  
+  for(i in 11:ncol(df)){
+    temp_df <- df
+    colnames(temp_df)[i] <- "plot_var"
+    plot_list[[colnames(df)[i]]] <- make_plot(temp_df)
+    
+  }
+  return(plot_list)
+}
+
+make_plot <- function(df){
+  
+  ret_plot <- df %>% ggplot(aes(x=Case.Control, y=log10(plot_var + 0.00001))) +
+    geom_violin(alpha=0.2, aes(fill=Case.Control)) +
+    geom_quasirandom(alpha=0.2) +
+    geom_boxplot(width=0.1, alpha=1, outlier.alpha = 0, aes(fill=Case.Control)) +
+    xlab("") +
+    ylab("log10(R.A)") +
+    facet_wrap(~ Type) +
+    theme_cowplot()
+  
+  return(ret_plot)
+}
+
+```
+
+
+## Genera
+```{r}
+Combined_Genera <- Full_Breast_data_genera %>% full_join(Full_Prostate_data_genera) %>% full_join(Full_Colon_data_genera)
+Comb_Genera_plots <- make_comb_plots(Combined_Genera)
+Comb_Genera_plots[[1]]
+saveRDS(Comb_Genera_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Ret_PATH_Genus_all_box.RDS")
+```
+
+## ASV
+```{r}
+Combined_ASV <- Full_Breast_Data %>% full_join(Full_Prostate_data) %>% full_join(Full_Colon_Data)
+Comb_ASV_plots <- make_comb_plots(Combined_ASV)
+saveRDS(Comb_ASV_plots, "~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS2/Ret_PATH_ASV_all_box.RDS")
+```
+
+
+
+```{r}
+Combined_Genera %>% filter(Case.Control=="Control") %>% summarize(mean(`Fusobacteriaceae;D_5__Fusobacterium`))
+
+time_plot <- ggplot(Combined_Genera, aes(y=log(`Fusobacteriaceae;D_5__Fusobacterium`, base=10), x=age_diff)) + geom_point() +
+  facet_grid(~ Type) + theme_cowplot() + 
+  geom_line(y=-1.46, linetype="dashed", color="red") +
+  xlab("Time since diagnosis")
+time_plot
+```
+
+
+```{r}
+fd <- Full_Prostate_data_genera %>% group_by(Case.Control) %>% summarize_if(is.numeric, mean) %>% melt() #%>% summarize(value=value[Case.Control=="Case"]/value[Case.Control=="Control"])
+
+fc_pro <- fd %>% mutate_if(is.numeric, log10) %>% summarize(fc=value[Case.Control=="Case"]/value[Case.Control=="Control"])
+range(fc_pro, na.rm=T)
+
+for(i in 1:length(fc_pro$fc)){
+  if(is.na(fc_pro$fc[i])){
+      message(i)
+  }else if(fc_pro$fc[i] < 1){
+    fc_pro$fc[i] <- 1/fc_pro$fc[i]
+  }
+
+  
+}
+fc_pro
+max(fc_pro, na.rm=T)
+```
+
+1.15
+
+```{r}
+fd <- Full_Prostate_data %>% group_by(Case.Control) %>% summarize_if(is.numeric, mean) %>% melt()
+
+fc_pro <- fd %>% mutate_if(is.numeric, log10) %>% summarize(fc=value[Case.Control=="Case"]/value[Case.Control=="Control"])
+range(fc_pro, na.rm=T)
+
+for(i in 1:length(fc_pro$fc)){
+  if(is.na(fc_pro$fc[i])){
+      message(i)
+  }else if(fc_pro$fc[i] < 1){
+    fc_pro$fc[i] <- 1/fc_pro$fc[i]
+  }
+
+  
+}
+
+max(fc_pro, na.rm=T)
+```
+
+1.18
