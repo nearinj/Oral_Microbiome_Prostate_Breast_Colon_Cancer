@@ -1,0 +1,428 @@
+---
+title: "RF_overall_analysis_caret"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+library(pROC)
+library(dplyr)
+
+library(cvAUC)
+
+library(cowplot)
+library(randomForest)
+library(ggbeeswarm)
+library(reshape2)
+
+col_list <- col_list <- c('#b74a8c',
+              '#8c7029',
+              '#7464c0',
+              '#ac5a51')
+
+make_pROC_curve_mean <- function(list_of_models, col_list, legend=F){
+  
+  text_pos <- c(0.3,0.25,0.2,0.15)
+  add <- F
+  
+  roc_list <- list()
+  for(i in 1:length(list_of_models)){
+    name <- names(list_of_models)[i]
+    mean_votes <- list_of_models[[i]]$pred %>% group_by(rowIndex) %>% summarize_if(is.numeric, list(name=mean))
+    mean_votes$obs <- list_of_models[[i]]$trainingData$.outcome[mean_votes$rowIndex]
+    
+    temp_roc <- roc(response=mean_votes$obs, predictor = mean_votes$Case_name, ci=T, levels=c("Control", "Case"),
+                    direction="<")
+    roc_list[[name]] <- temp_roc
+  }
+  ci.list <- lapply(roc_list, ci.se, specificities=seq(0,1,0.05))
+  
+  dat.ci.list <- lapply(ci.list, function(ciobj)
+    data.frame(x=as.numeric(rownames(ciobj)),
+               lower=ciobj[,1],
+               upper=ciobj[,3]))
+  
+  dat.auc.list <- lapply(roc_list, function(x)
+    data.frame(lower=x$ci[1],
+               mid=x$ci[2],
+               upper=x$ci[3]))
+  
+  p <- ggroc(roc_list) + theme_minimal() + 
+   geom_abline(slope=1, intercept = 1, linetype = "dashed", alpha=0.7, color = "grey") +
+   coord_equal() +
+     scale_color_manual("Feature type", values=col_list) +
+     scale_fill_manual("Feature type", values=col_list)
+  
+
+
+  
+  for(i in 1:length(dat.ci.list)) {
+    dat.ci.list[[i]]$name <- factor(names(dat.ci.list)[i], levels=c("ASV RA", "ASV CLR", "Genus CLR", "Genus RA"))
+    
+    p <- p + geom_ribbon(
+      data = dat.ci.list[[i]],
+      aes(x = x, ymin = lower, ymax = upper, fill=name),
+      alpha = .1,
+      inherit.aes = F)
+  
+    dat.auc.list[[i]]$name <- factor(names(dat.ci.list)[i], levels=c("ASV RA", "ASV CLR", "Genus CLR", "Genus RA"))
+    
+
+    p <- p + geom_text(
+      data=dat.auc.list[[i]],
+      aes(x=.25,
+          label = paste("AUC: ", round(mid, 3), " (", round(lower, 3), " - ", round(upper, 3), ")", sep=""),
+          color=name),
+      inherit.aes=F,
+      y=text_pos[i],
+      show.legend=FALSE)
+    message(text_pos[i])
+  } 
+  
+  return(p)
+}
+
+
+
+```
+
+# Model ROCs
+
+## Breast
+
+```{r}
+Br_ASV_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/ASV_RA.RDS")
+Br_ASV_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/ASV_CLR.RDS")
+
+Br_Genus_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/Genus_RA.RDS")
+Br_Genus_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/Genus_CLR.RDS")
+
+Br_models <- list("ASV CLR"=Br_ASV_CLR, 
+                  "ASV RA"=Br_ASV_RA, 
+                  "Genus CLR"=Br_Genus_CLR, 
+                  "Genus RA"=Br_Genus_RA)
+
+Br_plot_mean <- make_pROC_curve_mean(Br_models, col_list)
+Br_plot_mean
+```
+
+## Prostate
+
+```{r}
+Pr_ASV_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/ASV_RA.RDS")
+Pr_ASV_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/ASV_CLR.RDS")
+
+Pr_Genus_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/Genus_RA.RDS")
+Pr_Genus_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/Genus_CLR.RDS")
+
+Pr_models <- list("ASV CLR"=Pr_ASV_CLR, 
+                  "ASV RA"=Pr_ASV_RA, 
+                  "Genus CLR"=Pr_Genus_CLR, 
+                  "Genus RA"=Pr_Genus_RA)
+
+Pr_plot <- make_pROC_curve_mean(Pr_models, col_list)
+Pr_plot
+```
+
+## Colon
+
+```{r}
+Cr_ASV_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/ASV_RA.RDS")
+Cr_ASV_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/ASV_CLR.RDS")
+
+Cr_Genus_RA <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/Genus_RA.RDS")
+Cr_Genus_CLR <- readRDS("~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/Genus_CLR.RDS")
+
+Cr_models <- list("ASV CLR"=Cr_ASV_CLR, 
+                  "ASV RA"=Cr_ASV_RA, 
+                  "Genus CLR"=Cr_Genus_CLR, 
+                  "Genus RA"=Cr_Genus_RA)
+
+
+Cr_plot_mean <- make_pROC_curve_mean(Cr_models, col_list)
+Cr_plot_mean
+```
+
+## Final plot
+
+```{r}
+Ret_AUC_plot <- plot_grid(Br_plot_mean + ggtitle("Breast") + 
+                            theme(legend.position = "none", plot.title = element_text(hjust=0.5)), 
+                          Pr_plot + ggtitle("Prostate") + 
+                            theme(legend.position = "none", plot.title = element_text(hjust=0.5)), 
+                          Cr_plot_mean + ggtitle("Colon") + 
+                            theme(legend.position = "none", plot.title = element_text(hjust=0.5)), 
+                          nrow=1, labels=c("A", "B", "C"),
+                          label_y=.1)
+
+Ret_AUC_plot
+
+Ret_AUC_plot_leg <- plot_grid(NULL,
+                              Ret_AUC_plot, 
+                              NULL,
+                              get_legend(Br_plot_mean + theme(legend.position = "bottom")),
+                              nrow=4,
+                              rel_heights = c(-.3, 1,-.4, .2))
+Ret_AUC_plot_leg
+ggsave("~/Private/CHAPTER_4/Revised_Figures/Display_items/Figure3.pdf",
+        width = 13, height = 7, units = "in", dpi = 600, plot = Ret_AUC_plot_leg)
+ggsave("~/Private/CHAPTER_4/Revised_Figures/Display_items/Figure3.png",
+       width=13, height=7, units="in", dpi=600, plot=Ret_AUC_plot_leg)
+```
+
+# top features
+
+```{r}
+#takes in a list and generates the plots
+#barplot of the right and then a violin plot of abundances on the left
+
+Comp_var_imp <- function(list_of_models, list_of_abs, metadata, top=5, taxa_classes){
+  
+  #make barplots of feat_imp
+  barplots <- list()
+  for(i in 1:length(list_of_models)){
+    imp_df <- list_of_models[[i]]$finalModel$importance
+    
+    imp_df <- imp_df %>% data.frame() %>% arrange(desc(MeanDecreaseAccuracy)) %>% head(n=top)
+    imp_df$feature <- rownames(imp_df)
+    
+    #dealing with ASVs
+    if(i < 3){
+      imp_df <- imp_df %>% left_join(Taxa_classifications, by="feature")
+    }else{
+      imp_df$Taxon <- gsub(".*__(?=.*__)", "", imp_df$feature, perl=T)
+    }
+    
+    #get SDs
+    sd_df <- list_of_models[[i]]$finalModel$importanceSD %>% data.frame()
+    colnames(sd_df) <- paste(colnames(sd_df), "_SD", sep="")
+    sd_df$feature <- rownames(sd_df)
+    
+    imp_df <- imp_df %>% left_join(sd_df, by="feature")
+    #imp_df$feature <- factor(imp_df$feature, levels=rev(imp_df$feature))
+    imp_df$Taxon <- factor(imp_df$Taxon, levels=rev(imp_df$Taxon))
+    
+
+    p <- ggplot(imp_df, aes(y=MeanDecreaseAccuracy, x=Taxon)) +
+      geom_col(fill="#999999", col="black") +
+      geom_errorbar(aes(ymin=MeanDecreaseAccuracy-MeanDecreaseAccuracy_SD,
+                        ymax=MeanDecreaseAccuracy+MeanDecreaseAccuracy_SD),
+                    width=.2) +
+      coord_flip()
+      
+    barplots[[i]] <- p
+  }
+  #make boxplots from ab data
+
+  ab_boxplots <- list()
+  for(i in 1:length(list_of_models)){
+   
+    
+    ab_data <- list_of_abs[[i]][,as.character(barplots[[i]]$data$feature)]
+    
+    
+    stopifnot(identical(rownames(ab_data), as.character(metadata$X)))
+    
+    ab_data$Case.Control <- metadata$Case.Control
+    
+    ab_data_melt <- melt(ab_data)
+
+    if(i < 3){
+      ab_data_melt$Taxon <- taxa_classes$Taxon[match(ab_data_melt$variable, taxa_classes$feature)]
+    }else{
+      ab_data_melt$Taxon <- gsub(".*__(?=.*__)", "", ab_data_melt$variable, perl=T)
+    }
+    
+    ab_data_melt$Taxon <- factor(ab_data_melt$Taxon, levels=rev(levels(barplots[[i]]$data$Taxon)))
+  
+    if(i %% 2==0){
+      p <- ggplot(ab_data_melt, aes(x=Case.Control, y=log10(value+0.00001), fill=Case.Control)) +
+        geom_boxplot(outlier.shape = NA) +
+        geom_quasirandom(alpha=0.2) +
+        coord_flip() +
+        facet_wrap(~Taxon, nrow=top) +
+        ylab("log10(Relative Abundance)") +
+        xlab("")
+    }else{
+      p <- ggplot(ab_data_melt, aes(x=Case.Control, y=value, fill=Case.Control)) +
+        geom_boxplot(outlier.shape = NA) +
+        geom_quasirandom(alpha=0.2) +
+        coord_flip() +
+        facet_wrap(~Taxon, nrow=top) +
+        ylab("Center-Log-Ratio Abundance") +
+        xlab("")
+    }
+
+    
+    ab_boxplots[[i]] <- p
+  }
+  
+  return(list(barplots, ab_boxplots))
+}
+
+Taxa_classifications <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/taxa/taxonomy/taxonomy.tsv",
+                                   sep="\t",
+                                   header=T, stringsAsFactors = F)
+
+Taxa_classifications$Taxon <- gsub(".*__(?=.*__)", "", Taxa_classifications$Taxon, perl=T)
+Taxa_classifications$Taxon <- make.unique(Taxa_classifications$Taxon)
+colnames(Taxa_classifications)[1] <- "feature"
+```
+
+## Load in data
+
+```{r}
+
+#Load in Metadata
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data.RDS")
+Combined_data_filt <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_filt.RDS")
+
+#Load in ASVs
+ASV_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/deblur_output/asv_table/feature-table.tsv",
+                        sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+colnames(ASV_table)
+
+#Load in Genus table
+Genus_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/taxa/level6/feature-table.tsv",
+                          sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+
+#divide data up into different types
+
+Breast_data <- Combined_data %>% filter(Type == "Breast")
+Prostate_data <- Combined_data %>% filter(Type == "Prostate")
+CRC_data <- Combined_data %>% filter(Type == "Colon")
+
+#divide out asv and genus tables
+Breast_ASV <- ASV_table[,Breast_data$X]
+Prostate_ASV <- ASV_table[,Prostate_data$X]
+Colon_ASV <- ASV_table[,CRC_data$X]
+
+Breast_Genus <- Genus_table[,Breast_data$X]
+Prostate_Genus <- Genus_table[,Prostate_data$X]
+Colon_Genus <- Genus_table[,CRC_data$X]
+```
+
+# Generate CLR and RA tables
+
+## CLR
+
+Generated with a pseudocount of 1
+
+### ASV
+
+```{r}
+ASV_Breast_CLR <- data.frame(apply(Breast_ASV + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_CRC_CLR <- data.frame(apply(Colon_ASV + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_Prostate_CLR <- data.frame(apply(Prostate_ASV + 1, 2, function(x){log(x) - mean (log(x))}), check.names = F)
+
+#flip them for plotting
+ASV_Breast_CLR_flip <- data.frame(t(ASV_Breast_CLR), check.names = F)
+ASV_Breast_CLR_flip$X <- rownames(ASV_Breast_CLR_flip)
+
+ASV_CRC_CLR_flip <- data.frame(t(ASV_CRC_CLR), check.names = F)
+ASV_CRC_CLR_flip$X <- rownames(ASV_CRC_CLR_flip)
+
+ASV_Prostate_CLR_flip <- data.frame(t(ASV_Prostate_CLR), check.names = F)
+ASV_Prostate_CLR_flip$X <- rownames(ASV_Prostate_CLR_flip)
+```
+
+### Genus
+
+```{r}
+Genus_Breast_CLR <- data.frame(apply(Breast_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_CRC_CLR <- data.frame(apply(Colon_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_Prostate_CLR <- data.frame(apply(Prostate_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+
+Genus_Breast_CLR_flip <- data.frame(t(Genus_Breast_CLR), check.names = F)
+Genus_Breast_CLR_flip$X <- rownames(Genus_Breast_CLR_flip)
+
+Genus_CRC_CLR_flip <- data.frame(t(Genus_CRC_CLR), check.names = F)
+Genus_CRC_CLR_flip$X <- rownames(Genus_CRC_CLR_flip)
+
+Genus_Prostate_CLR_flip <- data.frame(t(Genus_Prostate_CLR), check.names = F)
+Genus_Prostate_CLR_flip$X <- rownames(Genus_Prostate_CLR_flip)
+```
+
+## RA
+
+### ASV
+```{r}
+ASV_Breast_RA <- sweep(Breast_ASV, 2, colSums(Breast_ASV), '/')
+ASV_CRC_RA <- sweep(Colon_ASV, 2, colSums(Colon_ASV), '/')
+ASV_Prostate_RA <- sweep(Prostate_ASV, 2, colSums(Prostate_ASV), '/')
+
+ASV_Breast_RA_flip <- data.frame(t(ASV_Breast_RA), check.names=F)
+ASV_Breast_RA_flip$X <- rownames(ASV_Breast_RA_flip)
+
+ASV_CRC_RA_flip <- data.frame(t(ASV_CRC_RA), check.names = F)
+ASV_CRC_RA_flip$X <- rownames(ASV_CRC_RA_flip)
+
+ASV_Prostate_RA_flip <- data.frame(t(ASV_Prostate_RA), check.names = F)
+ASV_Prostate_RA_flip$X <- rownames(ASV_Prostate_RA_flip)
+```
+
+### Genus
+
+```{r}
+Genus_Breast_RA <- sweep(Breast_Genus, 2, colSums(Breast_Genus), '/')
+Genus_CRC_RA <- sweep(Colon_Genus, 2, colSums(Colon_Genus), '/')
+Genus_Prostate_RA <- sweep(Prostate_Genus, 2, colSums(Prostate_Genus), '/')
+
+Genus_Breast_RA_flip <- data.frame(t(Genus_Breast_RA), check.names = F)
+Genus_Breast_RA_flip$X <- rownames(Genus_Breast_RA_flip)
+
+Genus_CRC_RA_flip <- data.frame(t(Genus_CRC_RA), check.names = F)
+Genus_CRC_RA_flip$X <- rownames(Genus_CRC_RA_flip)
+
+Genus_Prostate_RA_flip <- data.frame(t(Genus_Prostate_RA), check.names = F)
+Genus_Prostate_RA_flip$X <- rownames(Genus_Prostate_RA_flip)
+```
+
+
+## Breast
+```{r}
+Br_ab_data <- list(ASV_Breast_CLR_flip,
+                   ASV_Breast_RA_flip,
+                   Genus_Breast_CLR_flip,
+                   Genus_Breast_RA_flip)
+
+Var_imp_plots <- Comp_var_imp(list_of_models = Br_models,
+                              list_of_abs = Br_ab_data, metadata = Breast_data, top = 10,
+                              taxa_classes = Taxa_classifications)
+
+Var_imp_plots[[1]][[1]]
+```
+
+## Prostate
+```{r}
+
+```
+
+## Colon
+```{r}
+Cr_ab_data <- list(ASV_CRC_CLR_flip,
+                   ASV_CRC_RA_flip,
+                   Genus_CRC_CLR_flip,
+                   Genus_CRC_RA_flip)
+
+Var_imp_plots_Cr <- Comp_var_imp(list_of_models = Cr_models,
+                                 list_of_abs = Cr_ab_data, metadata=CRC_data, top=10,
+                                 taxa_classes = Taxa_classifications)
+
+
+
+plot_grid(Var_imp_plots_Cr[[1]][[2]] + theme_cowplot(),
+Var_imp_plots_Cr[[2]][[2]] + theme_cowplot())
+
+ggsave("~/Private/CHAPTER_4/Revised_Figures/Display_items/Supplemental/Retro_ASV_CLR_ML.pdf",
+       width=14, height = 7)
+
+
+plot_grid(Var_imp_plots_Cr[[1]][[4]] + theme_cowplot(),
+          Var_imp_plots_Cr[[2]][[4]] + theme_cowplot())
+
+ggsave("~/Private/CHAPTER_4/Revised_Figures/Display_items/Supplemental/Retro_Genus_CLR_ML.pdf",
+       width=14, height = 7)
+```

@@ -1,0 +1,1056 @@
+---
+title: "Diversity_analysis_revisions"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(broom)
+library(kableExtra)
+library(ggplot2)
+library(ggbeeswarm)
+library(cowplot)
+
+library(reshape2)
+library(ggpubr)
+library(rstatix)
+library(vegan)
+
+theme_set(theme_cowplot())
+
+#already tests
+remove_non_matching_caseIDS <- function(df){
+  
+    ## remove controls that don;t have associated case samples b/c they were removed due to poor sequencing
+    df_cases <- df %>% filter(Case.Control=="Case")
+    CaseIDs <- df_cases$CaseID
+    df_filt <- df %>% filter(CaseID %in% CaseIDs)
+
+    ## remove cases that don't have any controls associtated because they were removed due to poor sequencing 
+    ## these cases can only happen when the total number of samples with that CASEID is 1 
+    Summ_data <- df_filt %>% group_by(CaseID) %>% summarize(n())
+    remove_cases <- Summ_data$CaseID[which(Summ_data$`n()`==1)]
+    
+    if(length(remove_cases!=0)){
+      message(paste0("removing ", remove_cases, " Case samples due to no controls"))
+      test <- df_filt[-which(df_filt$CaseID %in% remove_cases),]
+      return(test)  
+    }
+
+    
+    return(df_filt)
+  
+}
+
+#already tested
+match_age_diff <- function(df){
+  
+  case_df <- df %>% filter(Case.Control=="Case")
+  for(i in 1:nrow(df)){
+    
+    if(is.na(df[i,'age_diff']) & df[i,'Case.Control']=="Control"){
+      temp_caseID <- df[i,'CaseID']
+      message(temp_caseID)
+      temp_age_diff <- case_df$age_diff[which(case_df$CaseID==temp_caseID)]
+      message(temp_age_diff)
+      df[i,'age_diff'] <- temp_age_diff
+    }
+  }
+  return(df)
+}
+
+run_lm_comb_data <- function(data, type_split, main_variable, covariates, estimate_var){
+  
+  anova_res <- list()
+  ggpubr_res <- list()
+  
+  for(i in unique(data[,type_split])){
+    pass_in_data <- data %>% filter(!!sym(type_split)==i)
+    message(type_split)
+    res <- run_lm_add_using_ggplot(pass_in_data, main_variable = main_variable, covariates = covariates,
+                            estimate_var = estimate_var, fct=i, type_split)
+    anova_res[[i]] <- res[[1]]
+    ggpubr_res[[i]] <- res[[2]]
+  }
+  ggpurb_df <- do.call(rbind, ggpubr_res)
+  
+  return(list(anova_res, ggpurb_df))
+  
+}
+
+
+#Checks out
+
+run_lm_add_using_ggplot <- function(data, main_variable, covariates, estimate_var, fct, type_split){
+    
+  
+    formula <- paste(covariates, main_variable, sep=" + ")
+    final_formula <- paste(estimate_var, "~", formula, sep=" ")
+    message(final_formula)
+    model <- lm(final_formula, data)
+    anova_res <- anova(model)
+    anova_res$feat <- rownames(anova_res)
+    anova_filt <- anova_res %>% filter(feat==main_variable)
+    pval <- anova_filt$`Pr(>F)`
+    
+    if(is.null(fct)){
+      ggpurb_format <- data.frame(group1=levels(data[,main_variable])[1],
+                                group2=levels(data[,main_variable])[2],
+                                p.adj=pval)
+    }else{
+      ggpurb_format <- data.frame(group1=levels(data[,main_variable])[1],
+                                group2=levels(data[,main_variable])[2],
+                                p.adj=round(pval,3),
+                                supp=fct,
+                                .y.=max(data[,estimate_var])*1.20)
+      
+      colnames(ggpurb_format)[4] <- type_split
+      
+    }
+    
+    return(list(anova_res, ggpurb_format))
+}
+
+data("USMortality")
+
+test_lm_comb <- run_lm_comb_data(USMortality, type_split="Status", main_variable = "Sex", covariates = NULL, estimate_var = "Rate")
+test_lm_comb
+
+## manually test
+
+Rural <- USMortality %>% filter(Status=="Rural")
+anova(lm(Rate ~ Sex, data=Rural))
+#checks out
+
+Urban <- USMortality %>% filter(Status=="Urban")
+anova(lm(Rate ~ Sex, data=Urban))
+
+
+make_alpha_div_plot <- function(df, split_type, main_variable, covariates, estimate_var,ylab,pval=T,hide.ns){
+  
+  stats <- run_lm_comb_data(data=df, type_split = split_type, main_variable = main_variable,
+                                        covariates = covariates, estimate_var = estimate_var)
+  
+  plot <- ggplot(df, aes_string(x=main_variable, y=estimate_var)) +
+  geom_boxplot(alpha=0.1, width=0.1, outlier.alpha = 0) +
+  geom_violin(alpha=0.2, aes_string(fill=main_variable)) +
+  geom_quasirandom(alpha=0.2) +
+  xlab("") +
+  ylab(ylab) +
+  facet_grid(reformulate(split_type))
+
+  if(pval==T){
+    plot <- plot + stat_pvalue_manual(stats[[2]], label="p.adj", hide.ns=hide.ns, y.position = '.y.')
+  }
+  
+  return(plot)
+}
+
+
+
+
+make_all_alpha_div_plots <- function(df, split_type, main_variable, covariates, estimate_var, ylab, pval=T, hide.ns=T){
+  plot_list <- list()
+  j <- 1
+  for(i in ylab){
+    plot_list[[i]] <- make_alpha_div_plot(df, split_type, main_variable, covariates, estimate_var[j], i, pval,hide.ns)
+    j <- j + 1
+  }
+  return(plot_list)
+  
+}
+
+test_vals <- c("Rate", "SE")
+
+test_plots <- make_all_alpha_div_plots(USMortality, split_type = "Status", main_variable = "Sex", covariates = NULL, estimate_var = test_vals,
+                                       ylab=c("Rate", "SE"))
+
+test_plots[[1]]
+test_plots[[2]]
+#all functions check out based on my unit tests
+
+```
+
+# Alpha Diversity
+
+## Load data in
+
+```{r load_meta}
+Metadata_Breast <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_Breast_21_03_11.csv", row.names = 1,
+                            stringsAsFactors = F)
+Metadata_CRC <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_CRC_21_03_11.csv", row.names = 1,
+                         stringsAsFactors = F)
+Metadata_Prostate <- read.csv("~/Private/Previous_Cancer_Project/Metadata/Metadata_Prostate_21_03_11.csv", row.names = 1,
+                              stringsAsFactors = F)
+```
+
+
+```{r generate_alpha_data, eval=F}
+
+#load Alpha data
+Faiths <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/alpha/faiths_pd.tsv", sep="\t", header=T)
+Evenness <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/alpha/evenness.tsv", sep="\t", header=T)
+Richness <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/alpha/richness.tsv", sep="\t", header=T)
+Shannon <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/alpha/shannon_div.tsv", sep="\t", header=T)
+
+Alpha_all <- full_join(Faiths, Evenness, by="X") %>% 
+  full_join(., Richness, by="X") %>%
+  full_join(., Shannon, by="X")
+
+Alpha_Breast <- Alpha_all %>% filter(X %in% Metadata_Breast$X)
+rownames(Alpha_Breast) <- Alpha_Breast$X
+Alpha_Prostate <- Alpha_all %>% filter(X %in% Metadata_Prostate$X)
+rownames(Alpha_Prostate) <- Alpha_Prostate$X
+Alpha_CRC <- Alpha_all %>% filter(X %in% Metadata_CRC$X)
+rownames(Alpha_CRC) <- Alpha_CRC$X
+```
+
+```{r prep_data_alpha}
+Metadata_Breast <- Metadata_Breast[rownames(Alpha_Breast),]
+Metadata_CRC <- Metadata_CRC[rownames(Alpha_CRC),]
+Metadata_Prostate <- Metadata_Prostate[rownames(Alpha_Prostate),]
+
+Metadata_Breast_Cases <- Metadata_Breast[which(Metadata_Breast$Case.Control==1),]
+Metadata_CRC_Cases <- Metadata_CRC[which(Metadata_CRC$Case.Control==1),]
+Metadata_Prostate_Cases <- Metadata_Prostate[which(Metadata_Prostate$Case.Control==1),]
+
+Alpha_Breast_Cases <- Alpha_Breast[rownames(Metadata_Breast_Cases),]
+Alpha_CRC_Cases <- Alpha_CRC[rownames(Metadata_CRC_Cases),]
+Alpha_Prostate_Cases <- Alpha_Prostate[rownames(Metadata_Prostate_Cases),]
+
+Breast_data <- Alpha_Breast %>% left_join(Metadata_Breast, by="X")
+Breast_data$Case.Control <- ifelse(Breast_data$Case.Control==1, "Case", "Control")
+
+Prostate_data <- Alpha_Prostate %>% left_join(Metadata_Prostate, by="X")
+Prostate_data$Case.Control <- ifelse(Prostate_data$Case.Control==1, "Case", "Control")
+
+CRC_data <- Alpha_CRC %>% left_join(Metadata_CRC, by="X")
+CRC_data$Case.Control <- ifelse(CRC_data$Case.Control==1, "Case", "Control")
+
+Breast_case_data <- Alpha_Breast_Cases %>% left_join(Metadata_Breast_Cases, by="X")
+Breast_case_data$Case.Control <- ifelse(Breast_case_data$Case.Control==1, "Case", "Control")
+
+Prostate_case_data <- Alpha_Prostate_Cases %>% left_join(Metadata_Prostate_Cases, by="X")
+Prostate_case_data$Case.Control <- ifelse(Prostate_case_data$Case.Control==1, "Case", "Control")
+
+CRC_case_data <- Alpha_CRC_Cases %>% left_join(Metadata_CRC_Cases, by="X")
+CRC_case_data$Case.Control <- ifelse(CRC_case_data$Case.Control==1, "Case", "Control")
+
+Breast_data$age_diff <- Breast_data$YEARS_SINCE_BC
+Prostate_data$age_diff <- Prostate_data$YEARS_SINCE_PC
+CRC_data$age_diff <- CRC_data$YEARS_SINCE_CRC_CANCER
+
+Breast_data$Type <- "Breast"
+Prostate_data$Type <- "Prostate"
+CRC_data$Type <- "Colon"
+
+Breast_data$Case.Control <- factor(Breast_data$Case.Control, levels=c("Control", "Case"))
+Prostate_data$Case.Control <- factor(Prostate_data$Case.Control, levels=c("Control", "Case"))
+CRC_data$Case.Control <- factor(CRC_data$Case.Control, levels=c("Control","Case"))
+
+Breast_data <- remove_non_matching_caseIDS(Breast_data)
+Prostate_data <- remove_non_matching_caseIDS(Prostate_data)
+CRC_data <- remove_non_matching_caseIDS(CRC_data)
+
+#prep data to be combined into one DF
+Breast_data_comb <- Breast_data %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, 
+                                           Case.Control, age_diff, Type, CaseID, Extraction_Number, 
+                                           A_SDC_AGE_CALC, PM_STANDING_HEIGHT_AVG, PM_WAIST_HIP_RATIO,
+                                           REFINED_GRAIN_SERVINGS_DAY_QTY, A_SDC_GENDER,
+                                           NUT_VEG_DAY_QTY, PM_BIOIMPED_BMI)
+
+Prostate_data_comb <- Prostate_data %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, 
+                                               Case.Control, age_diff, Type, CaseID, Extraction_Number,
+                                               A_SDC_AGE_CALC, PM_STANDING_HEIGHT_AVG, PM_WAIST_HIP_RATIO,
+                                               REFINED_GRAIN_SERVINGS_DAY_QTY, A_SDC_GENDER,
+                                               NUT_VEG_DAY_QTY, PM_BIOIMPED_BMI)
+
+CRC_data_comb <- CRC_data %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, 
+                                     Case.Control, age_diff, Type, CaseID, Extraction_Number,
+                                     A_SDC_AGE_CALC, PM_STANDING_HEIGHT_AVG, PM_WAIST_HIP_RATIO,
+                                     REFINED_GRAIN_SERVINGS_DAY_QTY, A_SDC_GENDER,
+                                     NUT_VEG_DAY_QTY, PM_BIOIMPED_BMI)
+
+Combined_data <- rbind(Breast_data_comb, Prostate_data_comb, CRC_data_comb)
+
+
+Case_data_filt <- Combined_data %>% filter(age_diff <= 6)
+
+Case_time_keep <- Case_data_filt$CaseID
+
+Combined_data_filt <- Combined_data %>% filter(CaseID %in% Case_time_keep)
+
+saveRDS(Combined_data, "~/Private/CHAPTER_4/Revised_data/Combined_data.RDS")
+saveRDS(Combined_data_filt, "~/Private/CHAPTER_4/Revised_data/Combined_data_filt.RDS")
+
+```
+
+# Analysis
+
+## Controlling for extraction run only
+
+### No time filtering
+```{r}
+est_vars <- c("faith_pd", "observed_features", "shannon_entropy", "pielou_evenness")
+ylabs <- c("Faith's PD", "Richness", "Shannon Div.", "Evenness")
+
+
+all_cancer_plots <- make_all_alpha_div_plots(df=Combined_data, split_type = "Type", main_variable = "Case.Control",
+                         covariates = "Extraction_Number", estimate_var = est_vars, ylab = ylabs, pval=T, hide.ns=F)
+all_cancer_plots[[1]]
+
+#verify p-values
+test <- Combined_data %>% filter(Type=="Breast")
+anova(lm(faith_pd ~ Extraction_Number + A_SDC_GENDER + Case.Control, data=test))
+#checks out.
+anova(lm(observed_features ~ Extraction_Number + Case.Control, data=test))
+#checks out
+test <- Combined_data %>% filter(Type=="Colon")
+anova(lm(faith_pd ~ Extraction_Number + A_SDC_GENDER + Case.Control, data=test))
+#checks out.
+anova(lm(observed_features ~ Extraction_Number + Case.Control, data=test))
+#all checks outs.
+
+
+saveRDS(all_cancer_plots, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_alpha_all.RDS")
+
+all_cancer_plots_no_pval <- make_all_alpha_div_plots(df=Combined_data, split_type = "Type", main_variable = "Case.Control",
+                         covariates = "Extraction_Number", estimate_var = est_vars, ylab = ylabs, pval=F)
+
+
+saveRDS(all_cancer_plots_no_pval, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_all_all_no_p.RDS")
+```
+
+### Time filtering
+
+```{r}
+all_cancer_plots_filt_6 <- make_all_alpha_div_plots(df=Combined_data_filt, split_type = "Type", main_variable = "Case.Control",
+                         covariates = "Extraction_Number", estimate_var = est_vars, ylab = ylabs, pval=T, hide.ns=F)
+
+saveRDS(all_cancer_plots_filt_6, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_alpha_all_filt.RDS")
+
+all_cancer_plots_filt_6_no_p <- make_all_alpha_div_plots(df=Combined_data_filt, split_type = "Type", main_variable = "Case.Control",
+                         covariates = "Extraction_Number", estimate_var = est_vars, ylab = ylabs, pval=F)
+saveRDS(all_cancer_plots_filt_6_no_p, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_alpha_all_filt_no_p.RDS")
+```
+
+## With co-variates
+
+### Non filt
+
+
+```{r}
+
+est_vars <- c("faith_pd", "observed_features", "shannon_entropy", "pielou_evenness")
+
+covar_stat_res <- list()
+covar_stat_res_age <- list()
+
+covars_age <- "Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER"
+covars <- "Extraction_Number + A_SDC_AGE_CALC + PM_STANDING_HEIGHT_AVG + PM_WAIST_HIP_RATIO + A_SDC_GENDER + NUT_VEG_DAY_QTY"
+
+for(i in est_vars){
+  
+  covar_stat_res[[i]] <- run_lm_comb_data(data=Combined_data, type_split = "Type", main_variable = "Case.Control",  
+                                     covariates = covars, 
+                                     estimate_var = i)
+  covar_stat_res_age[[i]] <- run_lm_comb_data(data=Combined_data, type_split = "Type", main_variable = "Case.Control",  
+                                     covariates = covars_age, 
+                                     estimate_var = i)
+}
+
+
+
+covar_stat_res_age
+covar_stat_res
+
+```
+
+
+### Filt
+
+```{r}
+filt_covar_stat_res <- list()
+filt_covar_stat_res_age <- list()
+
+for(i in est_vars){
+  filt_covar_stat_res[[i]] <- run_lm_comb_data(data=Combined_data_filt, type_split = "Type", main_variable = "Case.Control",  
+                                     covariates = covars, 
+                                     estimate_var = i)
+  
+    filt_covar_stat_res_age[[i]] <- run_lm_comb_data(data=Combined_data_filt, type_split = "Type", main_variable = "Case.Control",  
+                                     covariates = covars_age, 
+                                     estimate_var = i)
+}
+
+
+filt_covar_stat_res
+
+```
+
+Need to figure out which co-variates to include here!!!
+
+
+# Beta Diversity Analysis
+
+## functions
+```{r}
+plot_pca_all <- function(dist, meta, title, facet_type=NULL){
+  
+  dist_filt <- dist[meta$X, meta$X]
+  
+  dist_pca <- cmdscale(dist_filt, eig=T)
+  
+  dist_plot_data <- data.frame(PC1=dist_pca$points[,1],
+                               PC2=dist_pca$points[,2],
+                               Case.Control=meta$Case.Control_type,
+                               facet=meta[,facet_type])
+  
+  
+  PC1_size <- round(dist_pca$eig[1]/sum(dist_pca$eig)*100,1)
+  PC2_size <- round(dist_pca$eig[2]/sum(dist_pca$eig)*100,1)
+  
+  PC1_lab <- paste0("PC1 ", PC1_size, "%")
+  PC2_lab <- paste0("PC2 ", PC2_size, "%")
+  
+  if(!is.null(facet_type)){
+    dist_plot <- ggplot(dist_plot_data, aes(x=PC1, y=PC2)) +
+      geom_point(aes(fill=Case.Control, color=Case.Control)) +
+      stat_ellipse(aes(group=Case.Control, color=Case.Control)) +
+      theme(legend.title = element_blank()) +
+      xlab(PC1_lab) +
+      ylab(PC2_lab) +
+      ggtitle(title) +
+      facet_grid(~ facet)
+    
+    return(dist_plot)
+    
+  }else{
+      
+  dist_plot <- ggplot(dist_plot_data, aes(x=PC1, y=PC2, fill=Case.Control, group=Case.Control, color=Case.Control)) +
+    geom_point() +
+    stat_ellipse() +
+    theme(legend.title = element_blank()) +
+    xlab(PC1_lab) +
+    ylab(PC2_lab) +
+    ggtitle(title)
+  
+  return(dist_plot)
+    
+  }
+
+}
+
+
+## testing
+##make fake distance matrix
+
+test_dist <- data.frame(T1 = c(0,.8,.6,.4,.2),
+                        T2 = c(.8,0,.8,.6,.4),
+                        T3 = c(.6,.8,0,.8,.6),
+                        T4 = c(.4,.6,.8,0,.8),
+                        T5 = c(.2,.4,.6,.8,0))
+
+test_names <- c("T1", "T2", "T3", "T4", "T5")
+colnames(test_dist) <- test_names
+rownames(test_dist) <- test_names
+test_metadata <- data.frame(Case.Control_type=c("Cancer","Cancer","Healthy","Healthy","Cancer"),
+                            X=test_names)
+test_metadata$Case.Control <- test_metadata$Case.Control_type
+rownames(test_metadata) <- test_names
+
+plot_pca_all(dist=test_dist, meta = test_metadata, title = "test case", facet_type = NULL)
+#looks like it works.
+
+                       
+
+run_adonis_by_facet <- function(dist, meta, facet, covariates, main_variable){
+  
+  formula <- paste(covariates, main_variable, sep=" + ")
+  final_formula <- as.formula(paste("temp_dist", formula, sep="~"))
+  message(final_formula)
+  message(facet)
+  meta_splits <- group_split(meta, !!ensym(facet))
+  adonis_res <- list()
+
+  for(i in 1:length(meta_splits)){
+    name <- as.character(meta_splits[[i]][1,facet,drop=T])
+    message(name)
+    samps <- as.data.frame(meta_splits[[i]][,"X"])
+    temp_dist <- dist[samps$X, samps$X]
+    message("running adonis")
+    
+    temp_res<- adonis(formula=final_formula, data=meta_splits[[i]], by="margin")
+    temp_res <- as.data.frame(temp_res$aov.tab)
+    temp_res$feature <- rownames(temp_res)
+    
+    adonis_res[[name]] <- temp_res
+  }
+  
+  main_vars_p <- c()
+  for(i in 1:length(adonis_res)){
+    temp_p <- adonis_res[[i]] %>% filter(feature==main_variable) %>% select(`Pr(>F)`)
+    main_vars_p <- c(main_vars_p, paste("p: ",as.character(temp_p), sep=""))
+  }
+  
+  annotation_df <- data.frame(col1=levels(meta[,facet]),
+                              label=main_vars_p)
+  colnames(annotation_df)[1] <- "facet"
+  return(list(annotation_df,adonis_res))
+}
+
+## manually test this below
+
+
+make_all_plots_and_adonis <- function(list_dist, list_title, metadata, facet, covariate, main_variable){
+  
+  pca_plots <- list()
+  adonis_res <- list()
+  
+  for(i in names(list_dist)){
+    pca_plots[[i]] <- plot_pca_all(dist=list_dist[[i]], meta = metadata, title = list_title[[i]], facet_type = facet)
+    adonis_res[[i]] <- run_adonis_by_facet(dist=list_dist[[i]], meta=metadata, facet = facet, covariates = covariate, main_variable = main_variable) 
+  }
+  
+  return(list(pca_plots, adonis_res))
+}
+```
+
+#GG
+
+## All cancers in one plot
+
+```{r}
+WEIGHTED_UNIFRAC <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/beta/weighted_unifrac.tsv",
+                               sep="\t", header=T, row.names=1, comment.char="", quote="", check.names = F)
+
+UNWEIGHTED_UNIFRAC <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/beta/unweighted_unifrac.tsv",
+                                 sep="\t", header=T, row.names=1, comment.char="", quote="", check.names = F)
+
+BRAY_CURT <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/beta/bray_curtis.tsv",
+                        sep="\t", header=T, row.names=1, comment.char="", quote="", check.names=F)
+
+RPCA <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/diversity_gg13_8/beta/rpca_distace.tsv",
+                   sep="\t", header=T, row.names = 1, comment.char = "", quote="", check.names=F)
+
+weighted_uni_comb <- WEIGHTED_UNIFRAC[Combined_data$X, Combined_data$X]
+
+unweighted_uni_comb <- UNWEIGHTED_UNIFRAC[Combined_data$X, Combined_data$X]
+
+bray_comb <- BRAY_CURT[Combined_data$X, Combined_data$X]
+
+rpca_comb <- RPCA[Combined_data$X, Combined_data$X]
+
+Combined_data$Case.Control_type <- as.character(Combined_data$Case.Control)
+
+Combined_data$Case.Control_type[which(Combined_data$Case.Control_type=="Case")] <- Combined_data$Type[which(Combined_data$Case.Control=="Case")]
+
+
+Combined_data_filt$Case.Control_type <- as.character(Combined_data_filt$Case.Control)
+
+Combined_data_filt$Case.Control_type[which(Combined_data_filt$Case.Control_type=="Case")] <- Combined_data_filt$Type[which(Combined_data_filt$Case.Control=="Case")]
+```
+
+```{r}
+weighted_comb_plot <- plot_pca_all(weighted_uni_comb, Combined_data, "Weighted UniFrac")
+saveRDS(weighted_comb_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_wuni.RDS")
+
+unweighted_comb_plot <- plot_pca_all(unweighted_uni_comb, Combined_data, "Weighted UniFrac")
+saveRDS(unweighted_comb_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_uuni.RDS")
+
+bray_comb_plot <- plot_pca_all(bray_comb, Combined_data, "Bray-Curtis")
+saveRDS(bray_comb_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_bray_curt.RDS")
+
+rpca_comb_plot <- plot_pca_all(rpca_comb, Combined_data, "Robust Aitchison")
+rpca_comb_plot
+saveRDS(rpca_comb_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_rpca.RDS")
+```
+
+
+### time filt
+
+```{r}
+weighted_comb_time_plot <- plot_pca_all(weighted_uni_comb, Combined_data_filt, "Weighted UniFrac")
+unweighted_comb_time_plot <- plot_pca_all(unweighted_uni_comb, Combined_data_filt, "Unweighted UniFrac")
+bray_comb_time_plot <- plot_pca_all(bray_comb, Combined_data_filt, "Bray Curtis")
+rpca_comb_time_plot <- plot_pca_all(rpca_comb, Combined_data_filt, "Robust Aitchison")
+
+saveRDS(weighted_comb_time_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_wuni_filt.RDS")
+saveRDS(unweighted_comb_time_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_uuni_filt.RDS")
+saveRDS(bray_comb_time_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_bray_filt.RDS")
+saveRDS(rpca_comb_time_plot, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_rpca_filt.RDS")
+```
+
+## Individual cancer types
+
+### Breast
+```{r}
+Breast_data_comb <- Combined_data %>% filter(Type=="Breast")
+Breast_data_comb$Case.Control_type <- Breast_data_comb$Case.Control
+Breast_data_comb$Type <- factor(Breast_data_comb$Type)
+
+dist_list <- list(
+  'W_uni' = weighted_uni_comb,
+  'U_uni' =  unweighted_uni_comb,
+  'bray' = bray_comb,
+  'rpca' = rpca_comb
+)
+
+title_list <- list(
+  'W_uni' = "Weighted UniFrac",
+  'U_uni' = "Unweighted UniFrac",
+  'bray' = "Bray Curtis",
+  'rpca' = "Robust Aitchison"
+)
+
+
+Breast_plots <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata = Breast_data_comb, facet = "Type", covariate = "Extraction_Number", main_variable = "Case.Control")
+
+#double check some of the adonis test results to make sure they are right.
+
+Br_w_uni <- weighted_uni_comb[Breast_data_comb$X, Breast_data_comb$X]
+ad_test <- adonis2(Br_w_uni ~ Breast_data_comb$Extraction_Number + Breast_data_comb$Case.Control)
+ad_test
+#match up
+
+saveRDS(Breast_plots, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_breast_beta.RDS")
+```
+
+### Breast with covariates
+```{r}
+Br_unadjusted_stat <- list()
+Br_adjusted_stat_age <- list()
+Br_adjusted_stat <- list()
+
+covars_age <- "Extraction_Number + A_SDC_AGE_CALC"
+
+covars <- "Extraction_Number + A_SDC_AGE_CALC + PM_STANDING_HEIGHT_AVG + PM_WAIST_HIP_RATIO + NUT_VEG_DAY_QTY"
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+Breast_data_comb_noNA <- Breast_data_comb[-which(is.na(Breast_data_comb$PM_WAIST_HIP_RATIO)),]
+
+Breast_data_comb_noNA <- Breast_data_comb_noNA[-which(is.na(Breast_data_comb_noNA$NUT_VEG_DAY_QTY)),]
+
+dim(Breast_data_comb_noNA)
+dim(Breast_data_comb)
+table(Breast_data_comb$Case.Control)
+table(Breast_data_comb_noNA$Case.Control)
+
+for(i in 1:length(dist_list)){
+  
+  Br_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  Br_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  Br_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb_noNA, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(Br_unadjusted_stat)
+Br_unadjusted_stat[[1]]
+Br_unadjusted_stat[[2]]
+Br_unadjusted_stat[[3]]
+Br_unadjusted_stat[[4]]
+
+names(Br_adjusted_stat_age)
+Br_adjusted_stat_age[[1]]
+Br_adjusted_stat_age[[2]]
+Br_adjusted_stat_age[[3]]
+Br_adjusted_stat_age[[4]]
+
+names(Br_adjusted_stat)
+Br_adjusted_stat
+
+```
+
+### Prostate
+```{r}
+Prostate_data_comb <- Combined_data %>% filter(Type=="Prostate")
+Prostate_data_comb$Case.Control_type <- Prostate_data_comb$Case.Control
+Prostate_data_comb$Type <- factor(Prostate_data_comb$Type)
+
+Prostate_plots <- make_all_plots_and_adonis(list_dist=dist_list, list_title = title_list, metadata=Prostate_data_comb, 
+                                            facet="Type", covariate = "Extraction_Number",
+                                            main_variable = "Case.Control")
+
+
+#double check some values
+Pr_u_uni <- unweighted_uni_comb[Prostate_data_comb$X, Prostate_data_comb$X]
+Pr_test <- adonis2(Pr_u_uni ~ Prostate_data_comb$Extraction_Number + Prostate_data_comb$Case.Control)
+Pr_test
+
+#matches up
+
+saveRDS(Prostate_plots, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_prostate_beta.RDS")
+```
+
+### Prostate with covarites
+```{r}
+Pr_unadjusted_stat <- list()
+Pr_adjusted_stat_age <- list()
+Pr_adjusted_stat <- list()
+
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+Prostate_data_comb_noNA <- Prostate_data_comb[-which(is.na(Prostate_data_comb$PM_WAIST_HIP_RATIO)),]
+
+
+table(Prostate_data_comb_noNA$Case.Control)
+table(Prostate_data_comb$Case.Control)
+
+for(i in 1:length(dist_list)){
+  
+  Pr_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  Pr_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  Pr_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb_noNA, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(Pr_unadjusted_stat)
+Pr_unadjusted_stat[[1]]
+Pr_unadjusted_stat[[2]]
+Pr_unadjusted_stat[[3]]
+Pr_unadjusted_stat[[4]]
+
+names(Pr_adjusted_stat_age)
+Pr_adjusted_stat_age[[1]]
+Pr_adjusted_stat_age[[2]]
+Pr_adjusted_stat_age[[3]]
+Pr_adjusted_stat_age[[4]]
+
+names(Pr_adjusted_stat)
+Pr_adjusted_stat
+```
+
+### Colon
+```{r}
+CRC_data_comb <- Combined_data %>% filter(Type=="Colon")
+CRC_data_comb$Case.Control_type <- CRC_data_comb$Case.Control
+CRC_data_comb$Type <- factor(CRC_data_comb$Type)
+
+CRC_plots <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=CRC_data_comb, 
+                                       facet="Type", covariate = "Extraction_Number",
+                                       main_variable = "Case.Control")
+
+saveRDS(CRC_plots, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_CRC_beta.RDS")
+```
+
+### Colon with covarites
+```{r}
+CRC_unadjusted_stat <- list()
+CRC_adjusted_stat_age <- list()
+CRC_adjusted_stat <- list()
+
+covars_age <- "Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER"
+
+covars <- "Extraction_Number + A_SDC_AGE_CALC + PM_STANDING_HEIGHT_AVG + PM_WAIST_HIP_RATIO + A_SDC_GENDER + NUT_VEG_DAY_QTY"
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+
+for(i in 1:length(dist_list)){
+  
+  CRC_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  CRC_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  CRC_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(CRC_unadjusted_stat)
+CRC_unadjusted_stat
+
+CRC_adjusted_stat_age
+CRC_adjusted_stat
+```
+
+### Time filt
+
+shows similiar results so was not included in final manuscript.
+
+#### Breast
+```{r}
+Breast_data_comb <- Combined_data_filt %>% filter(Type=="Breast")
+Breast_data_comb$Case.Control_type <- Breast_data_comb$Case.Control
+Breast_data_comb$Type <- factor(Breast_data_comb$Type)
+
+Breast_plots_time <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=Breast_data_comb, facet="Type", covariate = "Extraction_Number",
+                                               main_variable = "Case.Control")
+
+saveRDS(Breast_plots_time, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_breast_beta_filt.RDS")
+```
+
+```{r}
+Br_unadjusted_stat <- list()
+Br_adjusted_stat_age <- list()
+Br_adjusted_stat <- list()
+
+covars_age <- "Extraction_Number + A_SDC_AGE_CALC"
+covars <- "Extraction_Number + A_SDC_AGE_CALC + PM_STANDING_HEIGHT_AVG + PM_WAIST_HIP_RATIO + NUT_VEG_DAY_QTY"
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+Breast_data_comb_noNA <- Breast_data_comb[-which(is.na(Breast_data_comb$PM_WAIST_HIP_RATIO)),]
+
+Breast_data_comb_noNA <- 
+  Breast_data_comb_noNA[-which(is.na(Breast_data_comb_noNA$NUT_VEG_DAY_QTY)),]
+
+dim(Breast_data_comb_noNA)
+dim(Breast_data_comb)
+table(Breast_data_comb$Case.Control)
+table(Breast_data_comb_noNA$Case.Control)
+
+for(i in 1:length(dist_list)){
+  
+  Br_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  Br_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  Br_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Breast_data_comb_noNA, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(Br_unadjusted_stat)
+Br_unadjusted_stat
+
+names(Br_adjusted_stat_age)
+Br_adjusted_stat_age
+
+names(Br_adjusted_stat)
+Br_adjusted_stat
+
+
+```
+
+
+#### Prostate
+```{r}
+Prostate_data_comb <- Combined_data_filt %>% filter(Type=="Prostate")
+Prostate_data_comb$Case.Control_type <- Prostate_data_comb$Case.Control_type
+Prostate_data_comb$Type <- factor(Prostate_data_comb$Type)
+
+Prostate_plots_times <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata = Prostate_data_comb, 
+                                                  facet="Type", covariate = "Extraction_Number",
+                                                  main_variable="Case.Control")
+
+saveRDS(Prostate_plots_times, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_prostate_beta_filt.RDS")
+```
+
+```{r}
+Pr_unadjusted_stat <- list()
+Pr_adjusted_stat_age <- list()
+Pr_adjusted_stat <- list()
+
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+Prostate_data_comb_noNA <- Prostate_data_comb[-which(is.na(Prostate_data_comb$PM_WAIST_HIP_RATIO)),]
+
+
+table(Prostate_data_comb_noNA$Case.Control)
+table(Prostate_data_comb$Case.Control)
+
+for(i in 1:length(dist_list)){
+  
+  Pr_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  Pr_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  Pr_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = Prostate_data_comb_noNA, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(Pr_unadjusted_stat)
+Pr_unadjusted_stat
+
+names(Pr_adjusted_stat_age)
+Pr_adjusted_stat_age
+
+names(Pr_adjusted_stat)
+Pr_adjusted_stat
+```
+
+#### CRC
+```{r}
+CRC_data_comb <- Combined_data_filt %>% filter(Type=="Colon")
+CRC_data_comb$Case.Control_type <- CRC_data_comb$Case.Control
+CRC_data_comb$Type <- factor(CRC_data_comb$Type)
+
+CRC_plots_times <- make_all_plots_and_adonis(list_dist = dist_list, list_title = title_list, metadata=CRC_data_comb, 
+                                             facet="Type", covariate = "Extraction_Number",
+                                             main_variable = "Case.Control")
+
+saveRDS(CRC_plots_times, "~/Private/CHAPTER_4/Revised_Figures/RDS/ret_path_CRC_beta_filt.RDS")
+```
+
+```{r}
+CRC_unadjusted_stat <- list()
+CRC_adjusted_stat_age <- list()
+CRC_adjusted_stat <- list()
+
+covars_age <- "Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER"
+
+covars <- "Extraction_Number + A_SDC_AGE_CALC + PM_STANDING_HEIGHT_AVG + PM_WAIST_HIP_RATIO + A_SDC_GENDER + NUT_VEG_DAY_QTY"
+
+#need to filter metadata so that it only has samples that are fully complete...
+
+
+for(i in 1:length(dist_list)){
+  
+  CRC_unadjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = "Extraction_Number")
+  
+  CRC_adjusted_stat_age[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars_age)
+  
+  ## this becomes problematic when not all features have that data...
+  CRC_adjusted_stat[[names(dist_list)[[i]]]] <- run_adonis_by_facet(dist = dist_list[[i]], meta = CRC_data_comb, 
+                                                 facet = "Type", main_variable = "Case.Control", 
+                                                 covariates = covars)
+  
+  
+  
+}
+names(CRC_unadjusted_stat)
+CRC_unadjusted_stat
+
+CRC_adjusted_stat_age
+CRC_adjusted_stat
+```
+
+
+# Alpha correlations with time since diagnosis
+
+```{r}
+Combined_data %>% filter(Case.Control=="Control", Type=="Breast") %>% summarize(mean(faith_pd))
+Combined_data %>% filter(Case.Control=="Control", Type=="Prostate") %>% summarize(mean(faith_pd))
+Combined_data %>% filter(Case.Control=="Control", Type=="Colon") %>% summarize(mean(faith_pd))
+
+Case_samples <- Combined_data %>% filter(Case.Control=="Case")
+
+Case_samples$mean_faith <- 12.449
+Case_samples$mean_faith[which(Case_samples$Type=="Prostate")] <- 12.1867
+Case_samples$mean_faith[which(Case_samples$Type=="Colon")] <- 12.640
+
+
+faiths_cor_data <- ggplot(Case_samples, aes(x=age_diff, y=faith_pd)) + geom_point() +
+  facet_grid(~ Type) + geom_line(aes(y=mean_faith), color="red", linetype="dashed") +
+  ylab("Faith's Phylogenetic Diversity") + xlab("Time after diagnosis")
+faiths_cor_data
+
+Combined_data %>% filter(Case.Control=="Control", Type=="Breast") %>% summarize(mean(observed_features))
+Combined_data %>% filter(Case.Control=="Control", Type=="Prostate") %>% summarize(mean(observed_features))
+Combined_data %>% filter(Case.Control=="Control", Type=="Colon") %>% summarize(mean(observed_features))
+
+Case_samples$mean_rich <- 120.9725
+Case_samples$mean_rich[which(Case_samples$Type=="Prostate")] <- 118.3043
+Case_samples$mean_rich[which(Case_samples$Type=="Colon")] <- 119.8085
+
+richness_cor_data <- ggplot(Case_samples, aes(x=age_diff, y=observed_features)) + geom_point() +
+  facet_grid(~ Type) + geom_line(aes(y=mean_rich), color="red", linetype="dashed") +
+  ylab("Richness") + xlab("Time after diagnosis")
+
+Combined_data %>% filter(Case.Control=="Control", Type=="Breast") %>% summarize(mean(shannon_entropy))
+Combined_data %>% filter(Case.Control=="Control", Type=="Prostate") %>% summarize(mean(shannon_entropy))
+Combined_data %>% filter(Case.Control=="Control", Type=="Colon") %>% summarize(mean(shannon_entropy))
+
+Case_samples$mean_shannon <- 4.348
+Case_samples$mean_shannon[which(Case_samples$Type=="Prostate")] <- 4.4397
+Case_samples$mean_shannon[which(Case_samples$Type=="Colon")] <- 4.3336
+
+shannon_cor_data <- ggplot(Case_samples, aes(x=age_diff, y=shannon_entropy)) + geom_point() +
+  facet_grid(~ Type) + geom_line(aes(y=mean_shannon), color="red", linetype="dashed") +
+  ylab("Shannon Diversity") + xlab("Time after diagnosis")
+
+
+Combined_data %>% filter(Case.Control=="Control", Type=="Breast") %>% summarize(mean(pielou_evenness))
+Combined_data %>% filter(Case.Control=="Control", Type=="Prostate") %>% summarize(mean(pielou_evenness))
+Combined_data %>% filter(Case.Control=="Control", Type=="Colon") %>% summarize(mean(pielou_evenness))
+
+Case_samples$mean_even <- 0.63397
+Case_samples$mean_even[which(Case_samples$Type=="Prostate")] <- 0.6492
+Case_samples$mean_even[which(Case_samples$Type=="Colon")] <- 0.6303
+
+even_cor_data <- ggplot(Case_samples, aes(x=age_diff, y=pielou_evenness)) + geom_point() +
+  facet_grid(~ Type) + geom_line(aes(y=mean_even), color="red", linetype="dashed") +
+  ylab("Evenness") + xlab("Time after diagnosis")
+
+```
+
+```{r}
+
+sup_cor_plot <- plot_grid(faiths_cor_data, richness_cor_data, shannon_cor_data, even_cor_data,
+                          nrow=2)
+sup_cor_plot
+
+ggsave("~/Private/CHAPTER_4/Revised_Figures/Display_items/Supplemental/Retro_Cor.pdf",
+       width=9, height=9, dpi=600)
+```
+
+
+```{r}
+cor.test(Breast_data_comb$age_diff, Breast_data_comb$faith_pd, na.rm=T, method = "spearman")
+cor.test(Breast_data_comb$age_diff, Breast_data_comb$shannon_entropy, na.rm=T, method="spearman")
+cor.test(Breast_data_comb$age_diff, Breast_data_comb$pielou_evenness, na.rm=T, method="spearman")
+cor.test(Breast_data_comb$age_diff, Breast_data_comb$observed_features, na.rm=T, method="spearman")
+
+
+cor.test(Prostate_data_comb$age_diff, Prostate_data_comb$faith_pd, na.rm=T, method = "spearman")
+cor.test(Prostate_data_comb$age_diff, Prostate_data_comb$shannon_entropy, na.rm=T, method="spearman")
+cor.test(Prostate_data_comb$age_diff, Prostate_data_comb$pielou_evenness, na.rm=T, method="spearman")
+cor.test(Prostate_data_comb$age_diff, Prostate_data_comb$observed_features, na.rm=T, method="spearman")
+
+cor.test(CRC_data_comb$age_diff, CRC_data_comb$faith_pd, na.rm=T, method = "spearman")
+cor.test(CRC_data_comb$age_diff, CRC_data_comb$shannon_entropy, na.rm=T, method="spearman")
+cor.test(CRC_data_comb$age_diff, CRC_data_comb$pielou_evenness, na.rm=T, method="spearman")
+cor.test(CRC_data_comb$age_diff, CRC_data_comb$observed_features, na.rm=T, method="spearman")
+```

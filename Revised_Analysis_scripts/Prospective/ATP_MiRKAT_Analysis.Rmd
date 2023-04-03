@@ -1,0 +1,284 @@
+---
+title: "MiKRAT analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MiRKAT)
+library(dplyr)
+```
+
+
+
+
+#Load in data
+
+```{r}
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_ATP_Pro.RDS")
+Combined_data$X <- as.character(Combined_data$X)
+
+Combined_data_filt <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_ATP_Pro_filt.RDS")
+Combined_data_filt$X <- as.character(Combined_data_filt$X)
+
+#load in the distance metrics
+WEIGHTED_UNIFRAC <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/weighted_unifrac.tsv"
+
+BRAY_CURTIS <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/bray_curt.tsv"
+
+UNWEIGHTED_UNIFRAC <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/unweighted_unifrac.tsv"
+
+RPCA <- "~/Private/ATP/Analysis_21_12_01/core-div-3000/raw_beta/rpca_distance.tsv"
+
+w_unifrac <- read.table(WEIGHTED_UNIFRAC, sep="\t", header=T, row.names = 1, comment.char="", quote="", check.names = F)
+
+bray_curt <- read.table(BRAY_CURTIS, sep="\t", header=T, row.names = 1, comment.char = "", quote="", check.names = F)
+
+u_unifrac <- read.table(UNWEIGHTED_UNIFRAC, sep="\t", header=T, row.names = 1, comment.char="", quote="", check.names = F)
+
+rpca <- read.table(RPCA, sep="\t", header=T, row.names=1, comment.char="", quote="", check.names=F)
+
+### setup the distance matrices
+
+weighted_uni_comb <- w_unifrac[Combined_data$X, Combined_data$X]
+
+unweighted_uni_comb <- u_unifrac[Combined_data$X, Combined_data$X]
+
+bray_comb <- bray_curt[Combined_data$X, Combined_data$X]
+
+rpca_comb <- rpca[Combined_data$X, Combined_data$X]
+```
+
+## divide by cancer type
+
+```{r}
+Breast_data <- Combined_data %>% filter(Type=="Breast")
+CRC_data <- Combined_data %>% filter(Type=="Colon")
+Prostate_data <- Combined_data %>% filter(Type=="Prostate")
+
+Breast_data_filt <- Combined_data_filt %>% filter(Type=="Breast")
+CRC_data_filt <- Combined_data_filt %>% filter(Type=="Colon")
+Prostate_data_filt <- Combined_data_filt %>% filter(Type=="Prostate")
+
+Breast_wuni <- w_unifrac[Breast_data$X, Breast_data$X]
+Breast_uuni <- u_unifrac[Breast_data$X, Breast_data$X]
+Breast_bray <- bray_curt[Breast_data$X, Breast_data$X]
+Breast_rpca <- rpca[Breast_data$X, Breast_data$X]
+
+CRC_wuni <- w_unifrac[CRC_data$X, CRC_data$X]
+CRC_uuni <- u_unifrac[CRC_data$X, CRC_data$X]
+CRC_bray <- bray_curt[CRC_data$X, CRC_data$X]
+CRC_rpca <- rpca[CRC_data$X, CRC_data$X]
+
+Prostate_wuni <- w_unifrac[Prostate_data$X, Prostate_data$X]
+Prostate_uuni <- u_unifrac[Prostate_data$X, Prostate_data$X]
+Prostate_bray <- bray_curt[Prostate_data$X, Prostate_data$X]
+Prostate_rpca <- rpca[Prostate_data$X, Prostate_data$X]
+
+```
+
+
+## Create kernel matrices
+```{r}
+Breast_wuni_kernel <- D2K(as.matrix(Breast_wuni))
+Breast_uuni_kernel <- D2K(as.matrix(Breast_uuni))
+Breast_bray_kernel <- D2K(as.matrix(Breast_bray))
+Breast_rpca_kernel <- D2K(as.matrix(Breast_rpca))
+
+CRC_wuni_kernel <- D2K(as.matrix(CRC_wuni))
+CRC_uuni_kernel <- D2K(as.matrix(CRC_uuni))
+CRC_bray_kernel <- D2K(as.matrix(CRC_bray))
+CRC_rpca_kernel <- D2K(as.matrix(CRC_rpca))
+
+Prostate_wuni_kernel <- D2K(as.matrix(Prostate_wuni))
+Prostate_uuni_kernel <- D2K(as.matrix(Prostate_uuni))
+Prostate_bray_kernel <- D2K(as.matrix(Prostate_bray))
+Prostate_rpca_kernel <- D2K(as.matrix(Prostate_rpca))
+```
+
+# Analysis
+
+## MiRKAT
+
+### Breast
+```{r}
+Breast_Ks <- list(
+ W.uni=Breast_wuni_kernel,
+ U.uni=Breast_uuni_kernel,
+ Bray=Breast_bray_kernel,
+ rpca=Breast_rpca_kernel
+)
+
+Breast_data$Case.Control_num <- if_else(Breast_data$Case.Control=="case", 1, 0)
+
+Breast_res <- MiRKAT(y = Breast_data$Case.Control_num, X=NULL,
+                      Ks=Breast_Ks, out_type = "D", returnR2 = TRUE)
+Breast_res
+
+covars <- cbind(Breast_data$`SALIVA AGE`)
+
+Breast_res_age <- MiRKAT(y = Breast_data$Case.Control_num, X=covars,
+                      Ks=Breast_Ks, out_type = "D", returnR2 = TRUE)
+
+Breast_res_age
+# need to remove NA?
+
+Breast_data_noNA <- Breast_data[-which(is.na(Breast_data$Comb_Height)),]
+
+Breast_data_noNA <- Breast_data_noNA[-which(is.na(Breast_data_noNA$Comb_Veg)),]
+
+Breast_data_noNA <- Breast_data_noNA[-which(is.na(Breast_data_noNA$Comb_WHR)),]
+
+#need to remake the distance metrics and kernels -.-
+
+covars <- cbind(Breast_data_noNA$`SALIVA AGE`,
+                Breast_data_noNA$Comb_Height,
+                Breast_data_noNA$Comb_WHR,
+                Breast_data_noNA$Comb_Veg)
+
+Breast_wuni <- w_unifrac[Breast_data_noNA$X, Breast_data_noNA$X]
+Breast_uuni <- u_unifrac[Breast_data_noNA$X, Breast_data_noNA$X]
+Breast_bray <- bray_curt[Breast_data_noNA$X, Breast_data_noNA$X]
+Breast_rpca <- rpca[Breast_data_noNA$X, Breast_data_noNA$X]
+
+Breast_wuni_kernel <- D2K(as.matrix(Breast_wuni))
+Breast_uuni_kernel <- D2K(as.matrix(Breast_uuni))
+Breast_bray_kernel <- D2K(as.matrix(Breast_bray))
+Breast_rpca_kernel <- D2K(as.matrix(Breast_rpca))
+
+Breast_Ks <- list(
+ W.uni=Breast_wuni_kernel,
+ U.uni=Breast_uuni_kernel,
+ Bray=Breast_bray_kernel,
+ rpca=Breast_rpca_kernel
+)
+
+
+
+Breast_res_all <- MiRKAT(y = Breast_data_noNA$Case.Control_num, X=covars,
+                      Ks=Breast_Ks, out_type = "D", returnR2 = TRUE)
+Breast_res_all
+```
+
+### Prostate
+```{r}
+Prostate_Ks <- list(
+ W.uni=Prostate_wuni_kernel,
+ U.uni=Prostate_uuni_kernel,
+ Bray=Prostate_bray_kernel,
+ rpca=Prostate_rpca_kernel
+)
+
+Prostate_data$Case.Control_num <- if_else(Prostate_data$Case.Control=="case", 1, 0)
+
+
+Prostate_res <- MiRKAT(y = Prostate_data$Case.Control_num, X=NULL,
+                      Ks=Prostate_Ks, out_type = "D", returnR2 = TRUE)
+Prostate_res
+
+covars <- cbind(Prostate_data$`SALIVA AGE`)
+
+Prostate_res_age <- MiRKAT(y = Prostate_data$Case.Control_num, X=covars,
+                      Ks=Prostate_Ks, out_type = "D", returnR2 = TRUE)
+
+Prostate_res_age
+# need to remove NA?
+
+Prostate_data_noNA <- Prostate_data[-which(is.na(Prostate_data$Comb_Height)),]
+
+Prostate_data_noNA <- Prostate_data_noNA[-which(is.na(Prostate_data_noNA$Comb_Veg)),]
+
+Prostate_data_noNA <- Prostate_data_noNA[-which(is.na(Prostate_data_noNA$Comb_WHR)),]
+
+#need to remake the distance metrics and kernels -.-
+
+covars <- cbind(Prostate_data_noNA$`SALIVA AGE`,
+                Prostate_data_noNA$Comb_Height,
+                Prostate_data_noNA$Comb_WHR,
+                Prostate_data_noNA$Comb_Veg)
+
+Prostate_wuni <- w_unifrac[Prostate_data_noNA$X, Prostate_data_noNA$X]
+Prostate_uuni <- u_unifrac[Prostate_data_noNA$X, Prostate_data_noNA$X]
+Prostate_bray <- bray_curt[Prostate_data_noNA$X, Prostate_data_noNA$X]
+Prostate_rpca <- rpca[Prostate_data_noNA$X, Prostate_data_noNA$X]
+
+Prostate_wuni_kernel <- D2K(as.matrix(Prostate_wuni))
+Prostate_uuni_kernel <- D2K(as.matrix(Prostate_uuni))
+Prostate_bray_kernel <- D2K(as.matrix(Prostate_bray))
+Prostate_rpca_kernel <- D2K(as.matrix(Prostate_rpca))
+
+Prostate_Ks <- list(
+ W.uni=Prostate_wuni_kernel,
+ U.uni=Prostate_uuni_kernel,
+ Bray=Prostate_bray_kernel,
+ rpca=Prostate_rpca_kernel
+)
+
+
+
+Prostate_res_all <- MiRKAT(y = Prostate_data_noNA$Case.Control_num, X=covars,
+                      Ks=Prostate_Ks, out_type = "D", returnR2 = TRUE)
+Prostate_res_all
+
+```
+
+### Colon
+```{r}
+CRC_Ks <- list(
+ W.uni=CRC_wuni_kernel,
+ U.uni=CRC_uuni_kernel,
+ Bray=CRC_bray_kernel,
+ rpca=CRC_rpca_kernel
+)
+
+CRC_data$Case.Control_num <- if_else(CRC_data$Case.Control=="case", 1, 0)
+
+CRC_res <- MiRKAT(y = CRC_data$Case.Control_num, X=CRC_data$Extraction_Number,
+                      Ks=CRC_Ks, out_type = "D", returnR2 = TRUE, method = "permutation")
+CRC_res
+
+covars <- cbind(CRC_data$`SALIVA AGE`, CRC_data$PARTICIPANT_SEX)
+
+CRC_res_age <- MiRKAT(y = CRC_data$Case.Control_num, X=covars,
+                      Ks=CRC_Ks, out_type = "D", returnR2 = TRUE, method="permutation")
+
+CRC_res_age
+
+#need to remake the distance metrics and kernels -.-
+CRC_data_noNA <- CRC_data[-which(is.na(CRC_data$Comb_Height)),]
+
+CRC_data_noNA <- CRC_data_noNA[-which(is.na(CRC_data_noNA$Comb_Veg)),]
+
+CRC_data_noNA <- CRC_data_noNA[-which(is.na(CRC_data_noNA$Comb_WHR)),]
+
+
+
+
+covars <- cbind(CRC_data_noNA$`SALIVA AGE`,
+                CRC_data_noNA$Comb_Height,
+                CRC_data_noNA$Comb_WHR,
+                CRC_data_noNA$Comb_Veg)
+
+CRC_wuni <- w_unifrac[CRC_data_noNA$X, CRC_data_noNA$X]
+CRC_uuni <- u_unifrac[CRC_data_noNA$X, CRC_data_noNA$X]
+CRC_bray <- bray_curt[CRC_data_noNA$X, CRC_data_noNA$X]
+CRC_rpca <- rpca[CRC_data_noNA$X, CRC_data_noNA$X]
+
+CRC_wuni_kernel <- D2K(as.matrix(CRC_wuni))
+CRC_uuni_kernel <- D2K(as.matrix(CRC_uuni))
+CRC_bray_kernel <- D2K(as.matrix(CRC_bray))
+CRC_rpca_kernel <- D2K(as.matrix(CRC_rpca))
+
+CRC_Ks <- list(
+ W.uni=CRC_wuni_kernel,
+ U.uni=CRC_uuni_kernel,
+ Bray=CRC_bray_kernel,
+ rpca=CRC_rpca_kernel
+)
+
+
+CRC_res_all <- MiRKAT(y = CRC_data_noNA$Case.Control_num, X=covars,
+                      Ks=CRC_Ks, out_type = "D", returnR2 = TRUE, method="permutation")
+CRC_res_all
+```

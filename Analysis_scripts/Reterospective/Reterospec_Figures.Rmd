@@ -125,7 +125,7 @@ all_comp_ret_beta_leg
 ## Genus DA Figure
 
 ```{r}
-genus_heat <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS/Ret_PATH_Genus_DA_heat.RDS")
+genus_heat <- readRDS("~/Private/CHAPTER_4/Publication_Markdowns/Display_items/intermediate_RDS/Ret_PATH_Genus_DA_heat_show_all.RDS")
 
 genus_heat
 

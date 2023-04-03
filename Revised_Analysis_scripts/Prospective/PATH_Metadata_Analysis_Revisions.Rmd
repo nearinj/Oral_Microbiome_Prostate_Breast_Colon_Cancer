@@ -1,0 +1,154 @@
+---
+title: "Metadata_Analysis"
+author: "Jacob T. Nearing"
+date: "6/20/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+
+
+
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_PATH_Pro.RDS")
+
+Alpha_Breast <- Combined_data %>% filter(Type=="Breast")
+Alpha_CRC <- Combined_data %>% filter(Type=="Colon")
+Alpha_Prostate <- Combined_data %>% filter(Type=="Prostate")
+```
+
+
+
+
+
+```{r}
+table(Alpha_Breast$Case.Control)
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(SDC_AGE_CALC))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(SDC_AGE_CALC))
+t.test(Alpha_Breast$SDC_AGE_CALC ~ Alpha_Breast$Case.Control)
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(PM_BIOIMPED_BMI))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(PM_BIOIMPED_BMI))
+t.test(Alpha_Breast$PM_BIOIMPED_BMI ~ Alpha_Breast$Case.Control)
+
+
+
+Alpha_Breast %>% filter(SMK_CIG_CUR_FREQ==1) %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(PM_WAIST_HIP_RATIO))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(PM_WAIST_HIP_RATIO))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_WAIST_HIP_RATIO))))
+t.test(Alpha_Breast$PM_WAIST_HIP_RATIO ~ Alpha_Breast$Case.Control)
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(NUT_VEG_QTY, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(NUT_VEG_QTY, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(NUT_VEG_QTY))))
+t.test(Alpha_Breast$NUT_VEG_QTY ~ Alpha_Breast$Case.Control)
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_STANDING_HEIGHT_AVG))))
+t.test(Alpha_Breast$PM_STANDING_HEIGHT_AVG ~ Alpha_Breast$Case.Control)
+
+```
+
+
+## Prostate Cancer
+
+```{r}
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(SDC_AGE_CALC))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(SDC_AGE_CALC))
+t.test(Alpha_Prostate$SDC_AGE_CALC ~ Alpha_Prostate$Case.Control)
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(PM_BIOIMPED_BMI))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(PM_BIOIMPED_BMI))
+t.test(Alpha_Prostate$PM_BIOIMPED_BMI ~ Alpha_Prostate$Case.Control)
+
+Alpha_Prostate %>% filter(SMK_CIG_CUR_FREQ==1) %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(PM_WAIST_HIP_RATIO))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(PM_WAIST_HIP_RATIO))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_WAIST_HIP_RATIO))))
+t.test(Alpha_Prostate$PM_WAIST_HIP_RATIO ~ Alpha_Prostate$Case.Control)
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(NUT_VEG_QTY, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(NUT_VEG_QTY, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(NUT_VEG_QTY))))
+t.test(Alpha_Prostate$NUT_VEG_QTY ~ Alpha_Prostate$Case.Control)
+
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_STANDING_HEIGHT_AVG))))
+t.test(Alpha_Prostate$PM_STANDING_HEIGHT_AVG ~ Alpha_Prostate$Case.Control)
+```
+
+## Colon Cancer
+
+```{r}
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(n())
+
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(SDC_AGE_CALC))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(SDC_AGE_CALC))
+t.test(Alpha_CRC$SDC_AGE_CALC ~ Alpha_CRC$Case.Control)
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(PM_BIOIMPED_BMI))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(PM_BIOIMPED_BMI))
+t.test(Alpha_CRC$PM_BIOIMPED_BMI ~ Alpha_CRC$Case.Control)
+
+Alpha_CRC %>% filter(SMK_CIG_CUR_FREQ==1) %>% group_by(Case.Control) %>% summarize(n())
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(median(age_diff))
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(PM_WAIST_HIP_RATIO))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(PM_WAIST_HIP_RATIO))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_WAIST_HIP_RATIO))))
+t.test(Alpha_CRC$PM_WAIST_HIP_RATIO ~ Alpha_CRC$Case.Control)
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(NUT_VEG_QTY, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(NUT_VEG_QTY, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(NUT_VEG_QTY))))
+t.test(Alpha_CRC$NUT_VEG_QTY ~ Alpha_CRC$Case.Control)
+
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(PM_STANDING_HEIGHT_AVG, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(PM_STANDING_HEIGHT_AVG))))
+t.test(Alpha_CRC$PM_STANDING_HEIGHT_AVG ~ Alpha_CRC$Case.Control)
+```
+
+
+# output table
+```{r}
+
+PATH_pro_data <- rbind(Alpha_Breast, Alpha_CRC)
+PATH_pro_data <- rbind(PATH_pro_data, Alpha_Prostate)
+
+Release_data <- PATH_pro_data %>% select(faith_pd, shannon_entropy, pielou_evenness, observed_features, X, Case.Control, age_diff, Type, CaseID, SMK_CIG_CUR_FREQ, SDC_GENDER)
+
+Release_data$age_diff[which(Release_data$Case.Control=="Control")] <- NA
+
+Release_data <- Release_data[,-10]
+
+write.table(x=Release_data, file="~/Private/CHAPTER_4/Cleaned_Repo_D1/Data/Prospective/PATH_metadata.csv", col.names=NA,
+            row.names = T, quote=F, sep=",")
+#all checks out.
+```
+
+```{r}
+sample_list <- Release_data %>% select(X)
+write.table(sample_list, file="~/Private/CHAPTER_4/UPLOAD_Data/PATH_pro_samps.txt", col.names=NA, quote=F, sep=" ")
+```
+

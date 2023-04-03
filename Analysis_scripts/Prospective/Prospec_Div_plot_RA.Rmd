@@ -47,6 +47,9 @@ alpha_leg <- plot_grid(alpha,
 alpha_leg
 
 
+
+PATH_alpha[[2]] + theme_cowplot() + theme(text=element_text(size=14)) + theme(legend.position = "none")
+ATP_alpha[[2]] + theme_cowplot() + theme(text=element_text(size=14)) + theme(legend.position = "none")
 ```
 
 
@@ -58,6 +61,8 @@ beta_PATH <- plot_grid(PATH_Breast_beta[[1]][[1]] + theme_cowplot() + theme(lege
                        labels=c("C","",""))
 
 beta_PATH
+
+
 ```
 
 ```{r}

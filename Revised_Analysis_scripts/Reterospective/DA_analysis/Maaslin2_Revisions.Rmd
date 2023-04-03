@@ -1,0 +1,256 @@
+---
+title: "Maaslin2_Revisions"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Maaslin2)
+library(dplyr)
+```
+
+
+
+# load in data
+
+```{r}
+
+#Load in Metadata
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data.RDS")
+Combined_data_filt <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_filt.RDS")
+
+#Load in ASVs
+ASV_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/deblur_output/asv_table/feature-table.tsv",
+                        sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+colnames(ASV_table)
+
+#Load in Genus table
+Genus_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/taxa/level6/feature-table.tsv",
+                          sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+
+#divide data up into different types
+
+Breast_data <- Combined_data %>% filter(Type == "Breast")
+Prostate_data <- Combined_data %>% filter(Type == "Prostate")
+CRC_data <- Combined_data %>% filter(Type == "Colon")
+
+#divide out asv and genus tables
+Breast_ASV <- ASV_table[,Breast_data$X]
+Prostate_ASV <- ASV_table[,Prostate_data$X]
+Colon_ASV <- ASV_table[,CRC_data$X]
+
+Breast_Genus <- Genus_table[,Breast_data$X]
+Prostate_Genus <- Genus_table[,Prostate_data$X]
+Colon_Genus <- Genus_table[,CRC_data$X]
+```
+
+# Breast
+
+```{r}
+Output <- "~/Private/Previous_Cancer_Project/Maaslin_Results/"
+
+Breast_data <- data.frame(Breast_data)
+rownames(Breast_data) <- Breast_data$X
+
+Breast_Cancer_run <- Maaslin2(input_data = Breast_ASV,
+                              input_metadata = Breast_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+Case_control_res <- Breast_Cancer_run[[1]][which(Breast_Cancer_run[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_MAASLIN2.RDS")
+
+Breast_Cancer_run_age <- Maaslin2(input_data = Breast_ASV,
+                              input_metadata = Breast_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+Case_control_res_age <- Breast_Cancer_run_age[[1]][which(Breast_Cancer_run_age[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_MAASLIN2_age.RDS")
+
+
+Breast_Cancer_run_all <- Maaslin2(input_data = Breast_ASV,
+                              input_metadata = Breast_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC",
+                                                "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+Case_control_res_all <- Breast_Cancer_run_all[[1]][which(Breast_Cancer_run_all[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_MAASLIN2_all.RDS")
+```
+
+```{r}
+Breast_Cancer_Genus <- Maaslin2(input_data = Breast_Genus,
+                                input_metadata = Breast_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control"), standardize = F)
+
+Case_control_res_Genus <- Breast_Cancer_Genus[[1]][which(Breast_Cancer_Genus[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res_Genus, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_MAASLIN2.RDS")
+
+
+Breast_Cancer_Genus_age <- Maaslin2(input_data = Breast_Genus,
+                                input_metadata = Breast_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC"), standardize = F)
+
+Case_control_res_Genus_age <- Breast_Cancer_Genus_age[[1]][which(Breast_Cancer_Genus_age[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res_Genus_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_MAASLIN2_age.RDS")
+
+
+
+
+Breast_Cancer_Genus_all <- Maaslin2(input_data = Breast_Genus,
+                                input_metadata = Breast_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC",
+                                                  "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"),
+                                standardize = F)
+
+Case_control_res_Genus_all <- Breast_Cancer_Genus_all[[1]][which(Breast_Cancer_Genus_all[[1]]$metadata=="Case.Control"),]
+
+saveRDS(Case_control_res_Genus_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_MAASLIN2_all.RDS")
+```
+
+# Prostate
+
+```{r}
+Prostate_data <- data.frame(Prostate_data)
+rownames(Prostate_data) <- Prostate_data$X
+
+Prostate_Cancer_run <- Maaslin2(input_data = Prostate_ASV,
+                              input_metadata = Prostate_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+PR_Case_control_res <- Prostate_Cancer_run[[1]][which(Prostate_Cancer_run[[1]]$metadata=="Case.Control"),]
+saveRDS(PR_Case_control_res, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_MAASLIN2.RDS")
+
+
+Prostate_Cancer_run_age <- Maaslin2(input_data = Prostate_ASV,
+                              input_metadata = Prostate_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+PR_Case_control_res_age <- Prostate_Cancer_run_age[[1]][which(Prostate_Cancer_run_age[[1]]$metadata=="Case.Control"),]
+saveRDS(PR_Case_control_res_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_MAASLIN2_age.RDS")
+
+
+Prostate_Cancer_run_all <-  Maaslin2(input_data = Prostate_ASV,
+                              input_metadata = Prostate_data,
+                              output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                              fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC",
+                                                "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"), 
+                              standardize = FALSE, plot_heatmap = F, plot_scatter = F)
+
+PR_Case_control_res_all <- Prostate_Cancer_run_all[[1]][which(Prostate_Cancer_run_all[[1]]$metadata=="Case.Control"),]
+saveRDS(PR_Case_control_res_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_MAASLIN2_all.RDS")
+```
+
+```{r}
+Prostate_Cancer_Genus <- Maaslin2(input_data = Prostate_Genus,
+                                input_metadata = Prostate_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control"), standardize = F)
+
+PR_Case_control_res_genus <- Prostate_Cancer_Genus[[1]][which(Prostate_Cancer_Genus[[1]]$metadata=="Case.Control"),]
+saveRDS(PR_Case_control_res_genus, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_MAASLIN2.RDS")
+
+
+Prostate_Cancer_Genus_age <- Maaslin2(input_data = Prostate_Genus,
+                                input_metadata = Prostate_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC"), standardize = F)
+
+PR_Case_control_res_genus_age <- Prostate_Cancer_Genus_age[[1]][which(Prostate_Cancer_Genus_age[[1]]$metadata=="Case.Control"),]
+
+saveRDS(PR_Case_control_res_genus_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_MAASLIN2_age.RDS")
+
+
+Prostate_Cancer_Genus_all <- Maaslin2(input_data = Prostate_Genus,
+                                input_metadata = Prostate_data,
+                                output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                                fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC",
+                                                  "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"),
+                                standardize = F)
+
+PR_Case_control_res_genus_all <- Prostate_Cancer_Genus_all[[1]][which(Prostate_Cancer_Genus_all[[1]]$metadata=="Case.Control"),]
+
+saveRDS(PR_Case_control_res_genus_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_MAASLIN2_all.RDS")
+```
+
+# Colon
+
+```{r}
+CRC_data <- data.frame(CRC_data)
+rownames(CRC_data) <- CRC_data$X
+
+CRC_run <- Maaslin2(input_data = Colon_ASV,
+                    input_metadata = CRC_data,
+                    output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                    fixed_effects = c("Extraction_Number", "Case.Control"), standardize = F)
+
+CRC_case_control <- CRC_run[[1]][which(CRC_run[[1]]$metadata=="Case.Control"),]
+saveRDS(CRC_case_control, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_MAASLIN2.RDS")
+
+
+CRC_run_age <- Maaslin2(input_data = Colon_ASV,
+                    input_metadata = CRC_data,
+                    output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                    fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC", "A_SDC_GENDER"),
+                    standardize = F)
+
+CRC_case_control_age <- CRC_run_age[[1]][which(CRC_run_age[[1]]$metadata=="Case.Control"),]
+saveRDS(CRC_case_control_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_MAASLIN2_age.RDS")
+
+CRC_run_all <- Maaslin2(input_data = Colon_ASV,
+                    input_metadata = CRC_data,
+                    output = Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                    fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC", "A_SDC_GENDER",
+                                      "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"),
+                    standardize = F)
+
+CRC_case_control_all <- CRC_run_all[[1]][which(CRC_run_all[[1]]$metadata=="Case.Control"),]
+saveRDS(CRC_case_control_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_MAASLIN2_all.RDS")
+```
+
+```{r}
+Genus_CRC_run <- Maaslin2(input_data = Colon_Genus,
+                          input_metadata = CRC_data,
+                          output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                          fixed_effects = c("Extraction_Number", "Case.Control"), standardize = F)
+
+Case_control_Genus <- Genus_CRC_run[[1]][which(Genus_CRC_run[[1]]$metadata=="Case.Control"),]
+saveRDS(Case_control_Genus, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_MAASLIN2.RDS")
+
+Genus_CRC_run_age <- Maaslin2(input_data = Colon_Genus,
+                          input_metadata = CRC_data,
+                          output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                          fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC", "A_SDC_GENDER"),
+                          standardize = F)
+
+Case_control_Genus_age <- Genus_CRC_run_age[[1]][which(Genus_CRC_run_age[[1]]$metadata=="Case.Control"),]
+saveRDS(Case_control_Genus_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_MAASLIN2_age.RDS")
+
+Genus_CRC_run_all <- Maaslin2(input_data = Colon_Genus,
+                          input_metadata = CRC_data,
+                          output=Output, min_abundance = 0, min_prevalence = 0, transform = "AST",
+                          fixed_effects = c("Extraction_Number", "Case.Control", "A_SDC_AGE_CALC", "A_SDC_GENDER",
+                                            "PM_STANDING_HEIGHT_AVG", "PM_WAIST_HIP_RATIO", "NUT_VEG_DAY_QTY"),
+                          standardize = F)
+
+Case_control_Genus_all <- Genus_CRC_run_all[[1]][which(Genus_CRC_run_all[[1]]$metadata=="Case.Control"),]
+saveRDS(Case_control_Genus_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_MAASLIN2_all.RDS")
+
+```

@@ -1,0 +1,427 @@
+---
+title: "All_RF_RCV_down_revisions"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(randomForest)
+library(caret)
+library(dplyr)
+library(readxl)
+
+library(ROCR)
+library(cvAUC)
+
+library(rfUtilities)
+
+library(doParallel)
+cl <- makePSOCKcluster(40)
+registerDoParallel(cl)
+
+remove_rare_features <- function( table , cutoff_pro=0.1, parallel=1 ) {
+  if(cutoff_pro<=0){
+    message("No filtering will be done due to cutoff_pro set to 0 or below")
+    return(table)
+  }
+  row2keep <- c()
+  cutoff <- ceiling( cutoff_pro * ncol(table) )
+  if(parallel <= 1){
+    for ( i in 1:nrow(table) ) {
+      row_nonzero <- length( which( table[ i , ]  > 0 ) )
+      if ( row_nonzero > cutoff ) {
+        row2keep <- c( row2keep , i)
+      }
+    }
+    return( table [ row2keep , , drop=F ])
+  }else{
+    `%dopar%` <- foreach::`%dopar%`
+    cl <- parallel::makeCluster(parallel)
+    doParallel::registerDoParallel(cl)
+    message("Running with: ", foreach::getDoParWorkers(), " cores")
+
+    res <- foreach::foreach(i = 1:nrow(table), .combine = c) %dopar% {
+      row_nonzero <- length( which ( table[ i , ] > 0))
+      if(row_nonzero > cutoff){
+        i
+      }else
+        NULL
+    }
+    parallel::stopCluster(cl)
+    return( table[res, , drop=F])
+
+  }
+
+}
+```
+
+# Load in data
+
+```{r}
+
+#Load in Metadata
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data.RDS")
+Combined_data_filt <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_filt.RDS")
+
+#Load in ASVs
+ASV_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/deblur_output/asv_table/feature-table.tsv",
+                        sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+colnames(ASV_table)
+
+#Load in Genus table
+Genus_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/taxa/level6/feature-table.tsv",
+                          sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+
+#divide data up into different types
+
+Breast_data <- Combined_data %>% filter(Type == "Breast")
+Prostate_data <- Combined_data %>% filter(Type == "Prostate")
+CRC_data <- Combined_data %>% filter(Type == "Colon")
+
+#divide out asv and genus tables
+Breast_ASV <- ASV_table[,Breast_data$X]
+Prostate_ASV <- ASV_table[,Prostate_data$X]
+Colon_ASV <- ASV_table[,CRC_data$X]
+
+Breast_Genus <- Genus_table[,Breast_data$X]
+Prostate_Genus <- Genus_table[,Prostate_data$X]
+Colon_Genus <- Genus_table[,CRC_data$X]
+```
+
+# CLR and RA abundances
+
+## CLR
+
+### ASV
+
+```{r}
+ASV_Breast_CLR <- data.frame(apply(Breast_ASV + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_CRC_CLR <- data.frame(apply(Colon_ASV + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+ASV_Prostate_CLR <- data.frame(apply(Prostate_ASV + 1, 2, function(x){log(x) - mean (log(x))}), check.names = F)
+
+#flip them for plotting
+ASV_Breast_CLR_flip <- data.frame(t(ASV_Breast_CLR), check.names = F)
+ASV_Breast_CLR_flip$X <- rownames(ASV_Breast_CLR_flip)
+
+ASV_CRC_CLR_flip <- data.frame(t(ASV_CRC_CLR), check.names = F)
+ASV_CRC_CLR_flip$X <- rownames(ASV_CRC_CLR_flip)
+
+ASV_Prostate_CLR_flip <- data.frame(t(ASV_Prostate_CLR), check.names = F)
+ASV_Prostate_CLR_flip$X <- rownames(ASV_Prostate_CLR_flip)
+```
+
+### Genus
+
+```{r}
+Genus_Breast_CLR <- data.frame(apply(Breast_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_CRC_CLR <- data.frame(apply(Colon_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+Genus_Prostate_CLR <- data.frame(apply(Prostate_Genus + 1, 2, function(x){log(x) - mean(log(x))}), check.names = F)
+
+Genus_Breast_CLR_flip <- data.frame(t(Genus_Breast_CLR), check.names = F)
+Genus_Breast_CLR_flip$X <- rownames(Genus_Breast_CLR_flip)
+
+Genus_CRC_CLR_flip <- data.frame(t(Genus_CRC_CLR), check.names = F)
+Genus_CRC_CLR_flip$X <- rownames(Genus_CRC_CLR_flip)
+
+Genus_Prostate_CLR_flip <- data.frame(t(Genus_Prostate_CLR), check.names = F)
+Genus_Prostate_CLR_flip$X <- rownames(Genus_Prostate_CLR_flip)
+```
+
+## RA
+
+### ASV
+```{r}
+ASV_Breast_RA <- sweep(Breast_ASV, 2, colSums(Breast_ASV), '/')
+ASV_CRC_RA <- sweep(Colon_ASV, 2, colSums(Colon_ASV), '/')
+ASV_Prostate_RA <- sweep(Prostate_ASV, 2, colSums(Prostate_ASV), '/')
+
+ASV_Breast_RA_flip <- data.frame(t(ASV_Breast_RA), check.names=F)
+ASV_Breast_RA_flip$X <- rownames(ASV_Breast_RA_flip)
+
+ASV_CRC_RA_flip <- data.frame(t(ASV_CRC_RA), check.names = F)
+ASV_CRC_RA_flip$X <- rownames(ASV_CRC_RA_flip)
+
+ASV_Prostate_RA_flip <- data.frame(t(ASV_Prostate_RA), check.names = F)
+ASV_Prostate_RA_flip$X <- rownames(ASV_Prostate_RA_flip)
+```
+
+### Genus
+
+```{r}
+Genus_Breast_RA <- sweep(Breast_Genus, 2, colSums(Breast_Genus), '/')
+Genus_CRC_RA <- sweep(Colon_Genus, 2, colSums(Colon_Genus), '/')
+Genus_Prostate_RA <- sweep(Prostate_Genus, 2, colSums(Prostate_Genus), '/')
+
+Genus_Breast_RA_flip <- data.frame(t(Genus_Breast_RA), check.names = F)
+Genus_Breast_RA_flip$X <- rownames(Genus_Breast_RA_flip)
+
+Genus_CRC_RA_flip <- data.frame(t(Genus_CRC_RA), check.names = F)
+Genus_CRC_RA_flip$X <- rownames(Genus_CRC_RA_flip)
+
+Genus_Prostate_RA_flip <- data.frame(t(Genus_Prostate_RA), check.names = F)
+Genus_Prostate_RA_flip$X <- rownames(Genus_Prostate_RA_flip)
+```
+
+## Filter abundances for prevelance
+
+```{r}
+Genus_Breast_filt <- remove_rare_features(Breast_Genus, cutoff_pro = 0.05)
+Genus_Prostate_filt <- remove_rare_features(Prostate_Genus, cutoff_pro = 0.05)
+Genus_CRC_filt <- remove_rare_features(Colon_Genus, cutoff_pro = 0.05)
+
+ASV_Breast_filt <- remove_rare_features(Breast_ASV, cutoff_pro = 0.05)
+ASV_Prostate_filt <- remove_rare_features(Prostate_ASV, cutoff_pro = 0.05)
+ASV_CRC_filt <- remove_rare_features(Colon_ASV, cutoff_pro = 0.05)
+```
+
+```{r}
+Breast_Genera <- rownames(Genus_Breast_filt)
+Breast_ASV <- rownames(ASV_Breast_filt)
+
+Prostate_Genera <- rownames(Genus_Prostate_filt)
+Prostate_ASV <- rownames(ASV_Prostate_filt)
+
+CRC_Genera <- rownames(Genus_CRC_filt)
+CRC_ASV <- rownames(ASV_CRC_filt)
+```
+
+### Filtered RA
+
+```{r}
+Filt_Breast_Genus_RA <- Genus_Breast_RA_flip[,Breast_Genera]
+Filt_Breast_ASV_RA <- ASV_Breast_RA_flip[,Breast_ASV]
+
+Filt_Prostate_Genus_RA <- Genus_Prostate_RA_flip[,Prostate_Genera]
+Filt_Prostate_ASV_RA <- ASV_Prostate_RA_flip[,Prostate_ASV]
+
+Filt_CRC_Genus_RA <- Genus_CRC_RA_flip[,CRC_Genera]
+Filt_CRC_ASV_RA <- ASV_CRC_RA_flip[,CRC_ASV]
+```
+
+### Filtered CLR
+
+```{r}
+Filt_Breast_Genus_CLR <- Genus_Breast_CLR_flip[,Breast_Genera]
+Filt_Breast_ASV_CLR <- ASV_Breast_CLR_flip[,Breast_ASV]
+
+Filt_Prostate_Genus_CLR <- Genus_Prostate_CLR_flip[,Prostate_Genera]
+Filt_Prostate_ASV_CLR <- ASV_Prostate_CLR_flip[,Prostate_ASV]
+
+Filt_CRC_Genus_CLR <- Genus_CRC_CLR_flip[,CRC_Genera]
+Filt_CRC_ASV_CLR <- ASV_CRC_CLR_flip[,CRC_ASV]
+```
+
+```{r}
+Breast_ret <- list(
+  Filt_Breast_ASV_CLR,
+  Filt_Breast_Genus_CLR,
+  Filt_Breast_ASV_RA,
+  Filt_Breast_Genus_RA
+)
+
+Colon_ret <- list(
+  Filt_CRC_ASV_CLR,
+  Filt_CRC_Genus_CLR,
+  Filt_CRC_ASV_RA,
+  Filt_CRC_Genus_RA
+)
+
+Prostate_ret <- list(
+  Filt_Prostate_ASV_CLR,
+  Filt_Prostate_Genus_CLR,
+  Filt_Prostate_ASV_RA,
+  Filt_Prostate_ASV_CLR
+)
+
+saveRDS(Breast_ret, "~/Private/CHAPTER_4/Revised_data/Breast_ret_PATH_abund.RDS")
+saveRDS(Colon_ret, "~/Private/CHAPTER_4/Revised_data/Colon_ret_PATH_abund.RDS")
+saveRDS(Prostate_ret, "~/Private/CHAPTER_4/Revised_data/Prostate_ret_PATH_abund.RDS")
+
+
+```
+
+# Modeling
+
+```{r}
+fit_control_down_rcv <- trainControl(method="repeatedcv", savePredictions = T, summaryFunction = twoClassSummary, classProbs = T, sampling = "down", repeats = 100, number = 5)
+```
+
+# CRC
+
+## ASV
+
+
+### RA
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_CRC_ASV_RA), CRC_data$X)
+
+ASV_RCV_down <- train(Filt_CRC_ASV_RA, y=CRC_data$Case.Control, method="rf", ntree=1001, 
+                      tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+ASV_RCV_down
+saveRDS(ASV_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/ASV_RA.RDS")
+```
+
+### CLR
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_CRC_ASV_CLR), CRC_data$X)
+
+ASV_CLR_RCV_down <- train(Filt_CRC_ASV_CLR, y=CRC_data$Case.Control, method="rf", ntree=1001, 
+                      tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+ASV_CLR_RCV_down
+saveRDS(ASV_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/ASV_CLR.RDS")
+```
+
+## Genus
+
+### RA
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_CRC_Genus_RA), CRC_data$X)
+
+Genus_RA_RCV_down <- train(Filt_CRC_Genus_RA, y=CRC_data$Case.Control, method="rf", ntree=1001, 
+                      tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+Genus_RA_RCV_down
+saveRDS(Genus_RA_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/Genus_RA.RDS")
+```
+
+### CLR
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_CRC_Genus_CLR), CRC_data$X)
+
+Genus_CLR_RCV_down <- train(Filt_CRC_Genus_CLR, y=CRC_data$Case.Control, method="rf", ntree=1001, 
+                      tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+Genus_CLR_RCV_down
+saveRDS(Genus_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/CRC/Genus_CLR.RDS")
+```
+
+# Breast
+
+## ASV
+
+
+### RA
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Breast_ASV_RA), Breast_data$X)
+
+Breast_ASV_RA_RCV_down <- train(Filt_Breast_ASV_RA, y=Breast_data$Case.Control, method="rf", ntree=1001,
+                                tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+
+Breast_ASV_RA_RCV_down
+saveRDS(Breast_ASV_RA_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/ASV_RA.RDS")
+```
+
+### CLR
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Breast_ASV_CLR), Breast_data$X)
+
+Breast_ASV_CLR_RCV_down <- train(Filt_Breast_ASV_CLR, y=Breast_data$Case.Control, method="rf", ntree=1001,
+                                 tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Breast_ASV_CLR_RCV_down
+saveRDS(Breast_ASV_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/ASV_CLR.RDS")
+```
+
+## Genus
+
+### RA
+
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Breast_Genus_RA), Breast_data$X)
+
+Breast_Genus_RA_RCV_down <- train(Filt_Breast_Genus_RA, y=Breast_data$Case.Control, method="rf", ntree=1001,
+                                  tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Breast_Genus_RA_RCV_down
+saveRDS(Breast_Genus_RA_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/Genus_RA.RDS")
+```
+
+### CLR
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Breast_Genus_CLR), Breast_data$X)
+
+Breast_Genus_CLR_RCV_down <- train(Filt_Breast_Genus_CLR, y=Breast_data$Case.Control, method="rf", ntree=1001,
+                                   tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Breast_Genus_CLR_RCV_down
+saveRDS(Breast_Genus_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Breast/Genus_CLR.RDS")
+```
+
+# Prostate
+
+## ASV
+
+### RA
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Prostate_ASV_RA), Prostate_data$X)
+
+Prostate_ASV_RA_RCV_down <- train(Filt_Prostate_ASV_RA, y=Prostate_data$Case.Control, method="rf", ntree=1001,
+                                  tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Prostate_ASV_RA_RCV_down
+saveRDS(Prostate_ASV_RA_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/ASV_RA.RDS")
+```
+
+### CLR
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Prostate_ASV_CLR), Prostate_data$X)
+
+Prostate_ASV_CLR_RCV_down <- train(Filt_Prostate_ASV_CLR, y=Prostate_data$Case.Control, method="rf", ntree=1001,
+                                  tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Prostate_ASV_CLR_RCV_down
+saveRDS(Prostate_ASV_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/ASV_CLR.RDS")
+```
+## Genus
+
+### RA
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Prostate_Genus_RA), Prostate_data$X)
+
+Prostate_Genus_RA_RCV_down <- train(Filt_Prostate_Genus_RA, y=Prostate_data$Case.Control, method="rf", ntree=1001,
+                                  tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Prostate_Genus_RA_RCV_down
+saveRDS(Prostate_Genus_RA_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/Genus_RA.RDS")
+```
+
+### CLR
+```{r}
+set.seed(10)
+
+identical(rownames(Filt_Prostate_Genus_CLR), Prostate_data$X)
+
+Prostate_Genus_CLR_RCV_down <- train(Filt_Prostate_Genus_CLR, y=Prostate_data$Case.Control, method="rf", ntree=1001,
+                                  tuneGrid = data.frame(mtry=21), trControl = fit_control_down_rcv, importance=T)
+
+Prostate_Genus_CLR_RCV_down
+saveRDS(Prostate_Genus_CLR_RCV_down, "~/Private/CHAPTER_4/Revised_data/RF/Retro/Prostate/Genus_CLR.RDS")
+```

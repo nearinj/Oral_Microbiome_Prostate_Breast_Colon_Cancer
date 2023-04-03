@@ -1,0 +1,318 @@
+---
+title: "Corncob_Revision"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(corncob)
+library(dplyr)
+```
+
+
+# Load in data
+
+```{r}
+
+#Load in Metadata
+Combined_data <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data.RDS")
+Combined_data_filt <- readRDS("~/Private/CHAPTER_4/Revised_data/Combined_data_filt.RDS")
+
+#Load in ASVs
+ASV_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/deblur_output/asv_table/feature-table.tsv",
+                        sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+colnames(ASV_table)
+
+#Load in Genus table
+Genus_table <- read.table("~/Private/Previous_Cancer_Project/RERUN_REV1/taxa/level6/feature-table.tsv",
+                          sep="\t", quote="", comment.char="", row.names=1, header=T, skip=1, check.names = F)
+
+#divide data up into different types
+
+Breast_data <- Combined_data %>% filter(Type == "Breast")
+Prostate_data <- Combined_data %>% filter(Type == "Prostate")
+CRC_data <- Combined_data %>% filter(Type == "Colon")
+
+#divide out asv and genus tables
+Breast_ASV <- ASV_table[,Breast_data$X]
+Prostate_ASV <- ASV_table[,Prostate_data$X]
+Colon_ASV <- ASV_table[,CRC_data$X]
+
+Breast_Genus <- Genus_table[,Breast_data$X]
+Prostate_Genus <- Genus_table[,Prostate_data$X]
+Colon_Genus <- Genus_table[,CRC_data$X]
+```
+
+
+# Breast
+```{r}
+Breast_data <- data.frame(Breast_data)
+rownames(Breast_data) <- Breast_data$X
+
+OTU <- phyloseq::otu_table(Breast_ASV, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(Breast_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+
+Breast_case <- differentialTest(formula= ~ Extraction_Number + Case.Control,
+                                phi.formula = ~ Extraction_Number + Case.Control,
+                                formula_null = ~ Extraction_Number,
+                                phi.formula_null = ~ Extraction_Number + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Breast_case, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_Corncob.RDS")
+
+
+Breast_case_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Breast_case_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_Corncob_age.RDS")
+
+
+Breast_case_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Breast_case_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/ASV_Corncob_all.RDS")
+
+```
+
+```{r}
+
+OTU <- phyloseq::otu_table(Breast_Genus, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(Breast_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+
+Genus_Breast_Case <- differentialTest(formula = ~ Extraction_Number + Case.Control,
+                                      phi.formula = ~ Extraction_Number + Case.Control,
+                                      formula_null = ~ Extraction_Number,
+                                      phi.formula_null = ~ Extraction_Number + Case.Control,
+                                      test="Wald", data=phylo,
+                                      boot=F,
+                                      fdr_cutoff = 0.1)
+
+saveRDS(Genus_Breast_Case, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_Corncob.RDS")
+
+Genus_Breast_Case_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_Breast_Case_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_Corncob_age.RDS")
+
+Genus_Breast_Case_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_Breast_Case_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Breast/Genus_Corncob_all.RDS")
+```
+
+
+# Prostate
+
+```{r}
+Prostate_data <- data.frame(Prostate_data)
+rownames(Prostate_data) <- Prostate_data$X
+
+
+OTU <- phyloseq::otu_table(Prostate_ASV, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(Prostate_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+
+ASV_Prostate_Case <- differentialTest(formula = ~ Extraction_Number + Case.Control,
+                                      phi.formula = ~ Extraction_Number + Case.Control,
+                                      formula_null = ~ Extraction_Number,
+                                      phi.formula_null = ~ Extraction_Number + Case.Control,
+                                      test="Wald", data=phylo,
+                                      boot=F,
+                                      fdr_cutoff = .1)
+
+saveRDS(ASV_Prostate_Case, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_Corncob.RDS")
+
+
+ASV_Prostate_Case_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(ASV_Prostate_Case_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_Corncob_age.RDS")
+
+ASV_Prostate_Case_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(ASV_Prostate_Case_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/ASV_Corncob_all.RDS")
+```
+
+```{r}
+OTU <- phyloseq::otu_table(Prostate_Genus, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(Prostate_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+Genus_Prostate_Case <- differentialTest(formula = ~ Extraction_Number + Case.Control,
+                                        phi.formula = ~ Extraction_Number + Case.Control,
+                                        formula_null = ~ Extraction_Number,
+                                        phi.formula_null = ~ Extraction_Number + Case.Control,
+                                        test="Wald", data=phylo,
+                                        boot=F,
+                                        fdr_cutoff = .1)
+
+saveRDS(Genus_Prostate_Case, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_Corncob.RDS")
+
+
+Genus_Prostate_Case_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_Prostate_Case_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_Corncob_age.RDS")
+
+Genus_Prostate_Case_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_Prostate_Case_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/Prostate/Genus_Corncob_all.RDS")
+
+```
+
+
+# Colon
+
+```{r}
+CRC_data <- data.frame(CRC_data)
+rownames(CRC_data) <- CRC_data$X
+
+OTU <- phyloseq::otu_table(Colon_ASV, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(CRC_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+
+ASV_CRC_test <- differentialTest(formula = ~ Extraction_Number + Case.Control,
+                                 phi.formula = ~ Extraction_Number + Case.Control,
+                                 formula_null = ~ Extraction_Number,
+                                 phi.formula_null = ~ Extraction_Number + Case.Control,
+                                 test="Wald", data=phylo,
+                                 boot=F,
+                                 fdr_cutoff = .1)
+
+saveRDS(ASV_CRC_test, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_Corncob.RDS")
+
+
+ASV_CRC_test_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(ASV_CRC_test_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_Corncob_age.RDS")
+
+ASV_CRC_test_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(ASV_CRC_test_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/ASV_Corncob_all.RDS")
+```
+
+```{r}
+OTU <- phyloseq::otu_table(Colon_Genus, taxa_are_rows = T)
+sampledata <- phyloseq::sample_data(CRC_data, errorIfNULL = T)
+phylo <- phyloseq::merge_phyloseq(OTU, sampledata)
+
+Genus_CRC_test <- differentialTest(formula = ~ Extraction_Number + Case.Control,
+                                   phi.formula = ~ Extraction_Number + Case.Control,
+                                   formula_null = ~ Extraction_Number,
+                                   phi.formula_null = ~ Extraction_Number + Case.Control,
+                                   test="Wald", data=phylo,
+                                   boot=F,
+                                   fdr_cutoff = .1)
+
+saveRDS(Genus_CRC_test, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_Corncob.RDS")
+
+
+Genus_CRC_test_age <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + A_SDC_GENDER + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_CRC_test_age, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_Corncob_age.RDS")
+
+
+
+Genus_CRC_test_all <- differentialTest(formula= ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                      PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                phi.formula = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER,
+                                phi.formula_null = ~ Extraction_Number + A_SDC_AGE_CALC + PM_WAIST_HIP_RATIO +
+                                  PM_STANDING_HEIGHT_AVG + NUT_VEG_DAY_QTY + A_SDC_GENDER + Case.Control,
+                                test="Wald", data=phylo,
+                                boot=F,
+                                fdr_cutoff = 0.1)
+
+saveRDS(Genus_CRC_test_all, "~/Private/CHAPTER_4/Revised_data/DA/PATH_Retro/CRC/Genus_Corncob_all.RDS")
+```

@@ -153,7 +153,9 @@ Full_data$Case.Control <- factor(Full_data$ARM.x, levels=c("control", "case"))
 ### I need to scan through the core data and see which are within 1 year of the saliva age
 Metadata[["Core"]]$ParticipantKey <- as.character(Metadata[["Core"]]$ParticipantKey)
 
-Full_data <- Full_data %>% left_join(Metadata[["Core"]][,c("ParticipantKey", "CORE_AGE_AT_SURVEY_RECEIPT")])
+Full_data <- Full_data %>% left_join(Metadata[["Core"]][,c("ParticipantKey",
+                                                           "CORE_AGE_AT_SURVEY_RECEIPT")])
+
 Full_data$use_core <- abs(Full_data$`SALIVA AGE` - Full_data$CORE_AGE_AT_SURVEY_RECEIPT) <= 1
 
 Metadata[["PANS"]]$ParticipantKey <- as.character(Metadata[["PANS"]]$ParticipantKey)
@@ -161,36 +163,27 @@ Metadata[["PANS"]]$ParticipantKey <- as.character(Metadata[["PANS"]]$Participant
 Full_data <- Full_data %>% left_join(Metadata[["PANS"]][,c("ParticipantKey", "PANS_AGE_AT_SURVEY_RECEIPT")])
 
 Full_data$use_PANS <- abs(Full_data$`SALIVA AGE` - Full_data$PANS_AGE_AT_SURVEY_RECEIPT) <= 1
-table(Full_data$use_PANS)
+
 
 #all the ones with PANS data can be used.
 
 Metadata[["PM_data"]]$ParticipantKey <- as.character(Metadata[["PM_data"]]$ParticipantKey)
 
-Full_data <- Full_data %>% left_join(Metadata[["PM_data"]][,c("ParticipantKey", "PM_AGE_AT_PM")])
+Full_data <- Full_data %>% left_join(Metadata[["PM_data"]][,c("ParticipantKey",
+                                                              "PM_AGE_AT_PM")])
+
 Full_data$use_PM <- abs(Full_data$`SALIVA AGE` - Full_data$PM_AGE_AT_PM) <= 3
 
-table(Full_data$use_PM)
 
 
 Metadata[["UHLQ"]]$ParticipantKey <- as.character(Metadata[["UHLQ"]]$ParticipantKey)
-Full_data <- Full_data %>% left_join(Metadata[["UHLQ"]][,c("ParticipantKey", "UHLQ_AGE_AT_SURVEY_RECEIPT")])
+
+Full_data <- Full_data %>% left_join(Metadata[["UHLQ"]][,c("ParticipantKey",
+                                                           "UHLQ_AGE_AT_SURVEY_RECEIPT")])
+
 Full_data$use_UHLQ <- abs(Full_data$`SALIVA AGE` - Full_data$UHLQ_AGE_AT_SURVEY_RECEIPT) <= 1
 
-table(Full_data$use_UHLQ)
-### not all people with PM data can be used as its more than a year old..
 
-
-## okay we need to grab the following Metadata focussing on the CORE data when possible
-## bmi
-
-## Height
-
-## waist hip ratio
-
-## sex
-
-## smoking
 CORE_data <- Metadata[["Core"]][,c("ParticipantKey", "CORE_SMK_STATUS", 
                                    "CORE_BMI", "CORE_AVG_HEIGHT", 
                                    "CORE_AVG_HIP", "CORE_AVG_ABDOMEN",
@@ -237,6 +230,37 @@ Veg_data <- Metadata[["PANS"]] %>%
 
 Full_data <- Full_data %>% left_join(PM_data) %>% left_join(UHLQ_Data) %>% left_join(Veg_data)
 
+#need to combined data now...
+#take CORE and then fill in the rest as needed...
+
+Full_data$Comb_BMI <- Full_data$CORE_BMI
+missing_BMI <- which(is.na(Full_data$Comb_BMI))
+Full_data$Comb_BMI[missing_BMI] <- Full_data$PM_BIOIMPED_BMI[missing_BMI]
+
+
+Full_data$Comb_WHR <- Full_data$WAIST_HIP_RATIO
+missing_WHR <- which(is.na(Full_data$WAIST_HIP_RATIO))
+Full_data$Comb_WHR[missing_WHR] <- Full_data$PM_WAIST_HIP_RATIO[missing_WHR]
+
+
+Full_data$Comb_Height <- Full_data$CORE_AVG_HEIGHT
+missing_height <- which(is.na(Full_data$Comb_Height))
+Full_data$Comb_Height[missing_height] <- Full_data$PM_STANDING_HEIGHT_AVG[missing_height]
+
+Full_data$Comb_Veg <- Full_data$CORE_FC01_VEG_DAY_NUM
+missing_veg <- which(is.na(Full_data$Comb_Veg))
+Full_data$Comb_Veg[missing_veg] <- Full_data$PANS_NT_1[missing_veg]
+
+Full_data$Comb_SMK <- Full_data$CORE_SMK_STATUS
+missing_SMK <- which(is.na(Full_data$Comb_SMK))
+Full_data$Comb_SMK[missing_SMK] <- Full_data$UHLQ_SMK_STATUS[missing_SMK]
+
+
+Metadata_sex <- Metadata[["Master_Data"]][,c("ParticipantKey", "PARTICIPANT_SEX")]
+Metadata_sex$ParticipantKey <- as.character(Metadata_sex$ParticipantKey)
+
+Full_data <- Full_data %>% left_join(Metadata_sex)
+
 ```
 
 ```{r}
@@ -252,13 +276,29 @@ Alpha_CRC$X <- Alpha_CRC$researcher
 
 #add caseIDs (so we know the matching case and control samples)
 Alpha_Breast$CaseID <- case_control_match$matchID[match(Alpha_Breast$ParticipantKey, case_control_match$value)]
+
 Alpha_Prostate$CaseID <- case_control_match$matchID[match(Alpha_Prostate$ParticipantKey, case_control_match$value)]
+
 Alpha_CRC$CaseID <- case_control_match$matchID[match(Alpha_CRC$ParticipantKey, case_control_match$value)]
 
 #remove cases or controls that do not have corresponding case/control samples
 Alpha_Breast <- remove_non_matching_caseIDS(Alpha_Breast)
 Alpha_Prostate <- remove_non_matching_caseIDS(Alpha_Prostate)
 Alpha_CRC <- remove_non_matching_caseIDS(Alpha_CRC)
+
+
+Combined_data <- rbind(Alpha_Breast, Alpha_Prostate, Alpha_CRC)
+
+saveRDS(Combined_data, "~/Private/CHAPTER_4/Revised_data/Combined_data_ATP_Pro.RDS")
+
+
+Case_data_filt <- Combined_data %>% filter(Case.Control=="case") %>% filter(age_diff <= 4)
+
+Case_time_keep <- Case_data_filt$CaseID
+
+Combined_data_filt <- Combined_data %>% filter(CaseID %in% Case_time_keep)
+
+saveRDS(Combined_data_filt, "~/Private/CHAPTER_4/Revised_data/Combined_data_ATP_Pro_filt.RDS")
 ```
 
 # Breast Cancer
@@ -268,18 +308,35 @@ Alpha_Breast %>% group_by(Case.Control) %>% summarize(n())
 
 Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
 Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+t.test(Alpha_Breast$`SALIVA AGE` ~ Alpha_Breast$Case.Control)
 
 
 Alpha_Breast %>% group_by(Case.Control) %>% summarize(median(age_diff))
 
 
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_BMI))))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(Comb_BMI, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(Comb_BMI, na.rm=T))
+t.test(Alpha_Breast$Comb_BMI ~ Alpha_Breast$Case.Control)
 
-Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
-Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
-Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control, Comb_SMK) %>% summarize(n())
 
 
-Alpha_Breast %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_WHR))))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(Comb_WHR, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(Comb_WHR, na.rm=T))
+t.test(Alpha_Breast$Comb_WHR ~ Alpha_Breast$Case.Control)
+
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Veg))))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(Comb_Veg, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(Comb_Veg, na.rm=T))
+t.test(Alpha_Breast$Comb_Veg ~ Alpha_Breast$Case.Control)
+
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Height))))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(mean(Comb_Height, na.rm=T))
+Alpha_Breast %>% group_by(Case.Control) %>% summarize(sd(Comb_Height, na.rm=T))
+t.test(Alpha_Breast$Comb_Height ~ Alpha_Breast$Case.Control)
 
 ```
 
@@ -291,14 +348,34 @@ Alpha_Prostate %>% group_by(Case.Control) %>% summarize(n())
 
 Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
 Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+t.test(Alpha_Prostate$`SALIVA AGE` ~ Alpha_Prostate$Case.Control)
 
 Alpha_Prostate %>% group_by(Case.Control) %>% summarize(median(age_diff))
 
-Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
-Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
-Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_BMI))))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(Comb_BMI, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(Comb_BMI, na.rm=T))
+t.test(Alpha_Prostate$Comb_BMI ~ Alpha_Prostate$Case.Control)
+
 
 Alpha_Prostate %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
+
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_WHR))))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(Comb_WHR, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(Comb_WHR, na.rm=T))
+t.test(Alpha_Prostate$Comb_WHR ~ Alpha_Prostate$Case.Control)
+
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Veg))))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(Comb_Veg, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(Comb_Veg, na.rm=T))
+t.test(Alpha_Prostate$Comb_Veg ~ Alpha_Prostate$Case.Control)
+
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Height))))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(mean(Comb_Height, na.rm=T))
+Alpha_Prostate %>% group_by(Case.Control) %>% summarize(sd(Comb_Height, na.rm=T))
+t.test(Alpha_Prostate$Comb_Height ~ Alpha_Prostate$Case.Control)
 ```
 
 
@@ -309,15 +386,32 @@ Alpha_CRC %>% group_by(Case.Control) %>% summarize(n())
 
 Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(`SALIVA AGE`))
 Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(`SALIVA AGE`))
+t.test(Alpha_CRC$`SALIVA AGE` ~ Alpha_CRC$Case.Control)
 
 Alpha_CRC %>% group_by(Case.Control) %>% summarize(median(age_diff))
 
-Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(CORE_BMI))))
-Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(CORE_BMI, na.rm=T))
-Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(CORE_BMI, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_BMI))))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(Comb_BMI, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(Comb_BMI, na.rm=T))
+t.test(Alpha_CRC$Comb_BMI ~ Alpha_CRC$Case.Control)
 
 Alpha_CRC %>% group_by(Case.Control, CORE_SMK_STATUS) %>% summarize(n())
 
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_WHR))))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(Comb_WHR, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(Comb_WHR, na.rm=T))
+t.test(Alpha_CRC$Comb_WHR ~ Alpha_CRC$Case.Control)
+
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Veg))))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(Comb_Veg, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(Comb_Veg, na.rm=T))
+t.test(Alpha_CRC$Comb_Veg ~ Alpha_CRC$Case.Control)
+
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(length(which(is.na(Comb_Height))))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(mean(Comb_Height, na.rm=T))
+Alpha_CRC %>% group_by(Case.Control) %>% summarize(sd(Comb_Height, na.rm=T))
+t.test(Alpha_CRC$Comb_Height ~ Alpha_CRC$Case.Control)
 ```
 
 # save metadata that can be released
